@@ -1,0 +1,15 @@
+*.exe
+*.test
+*.out
+vendor/
+.env
+.env.local
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/
+
+# Speckit local state
+.specify/feature.json
