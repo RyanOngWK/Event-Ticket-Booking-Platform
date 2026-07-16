@@ -50,11 +50,13 @@ These v1 choices were made with future scale in mind:
 - **Application-level encryption** — upgrading from env-var key to AWS KMS / HashiCorp Vault requires no code changes. See [[pii-encryption]].
 - **Pluggable email provider** — swapping from LogProvider to real SMTP/SendGrid requires config only, no business logic changes. See [[email-retry-strategy]].
 - **Kafka topics follow convention** — `user.created` topic exists with no consumer yet. Any future service can start consuming immediately. See [[kafka]], [[service-decoupling]].
+- **Docker image build+push** — CI builds and pushes all 4 service images to GHCR on main push. See [[ci-cd-pipeline]].
 
 ## Cross-references
 
 - [[overview]] — v1 system scope summary
 - [[constitution]] — principles that these trade-offs respect
+- [[ci-cd-pipeline]] — Docker build+push pipeline
 - [[ticket-service]] — cross-DB read technical debt
 - [[kafka]] — glibc dependency
 - [[pii-encryption]] — encryption upgrade path

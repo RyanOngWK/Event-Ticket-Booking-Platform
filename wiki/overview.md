@@ -2,8 +2,8 @@
 title: "System Overview"
 category: "entity"
 tags: [overview, architecture, synthesis]
-source_count: 7
-updated: 2025-07-16
+source_count: 8
+updated: 2025-07-17
 ---
 
 # System Overview
@@ -93,13 +93,18 @@ See [[trade-offs]] for the full v1 scope decisions.
 
 ## Development Pipeline
 
-The project was built using a spec-driven AI pipeline: Constitution → Spec → Plan → Tasks → Implement → Converge. Every line of code traces back to a requirement. Full traceability chain preserved in the `specs/` directory.
+The project was built using a spec-driven AI pipeline: Constitution → Spec → Plan → Tasks → Implement → Converge. Every line of code traces back to a requirement.
+
+## CI/CD
+
+[[ci-cd-pipeline]]: GitHub Actions runs on every push and PR — build/vet, unit, integration, e2e tests. On main push, all 4 service images are built and pushed to `ghcr.io/ryanongwk/event-ticket-booking-platform`. `docker-compose.yml` pulls pre-built images or builds locally.
 
 ## Cross-references
 
 - [[constitution]] — governing principles
 - [[trade-offs]] — conscious v1 decisions and deferred scope
 - [[testing-strategy]] — test pyramid and practices
+- [[ci-cd-pipeline]] — GitHub Actions workflow, Docker image build+push
 - [[sources/specs]] — traceability from wiki to raw specification documents
 - [[sources/config-files]] — infrastructure and build configuration
 - [[sources/code-structure]] — source code layout

@@ -2,6 +2,27 @@
 
 Chronological record of all operations: ingests, queries, lint passes, and structural changes. Append-only. Entries use a consistent date-header prefix for grep-ability.
 
+## [2025-07-17] ingest | CI/CD Pipeline — Docker Build & Push
+
+**Pages created:**
+- `concepts/ci-cd-pipeline.md` — GitHub Actions CI pipeline overview, docker build+push flow, registry layout
+
+**Pages updated:**
+- `index.md` — added ci-cd-pipeline to concepts section
+- `sources/config-files.md` — added `.github/workflows/ci.yml` entry, updated docker-compose and Dockerfile descriptions to reference CI, bumped source_count
+- `concepts/trade-offs.md` — added Docker build+push to "Design Decisions That Will Scale"
+
+**Sources ingested:**
+- `.github/workflows/ci.yml` — 5-job pipeline (build-and-vet, unit, integration, e2e, docker)
+- `docker-compose.yml` — updated with GHCR image references
+
+**Key insights:**
+- CI now builds and pushes all 4 service images to GHCR on main push; PRs build-only
+- Matrix strategy runs 4 parallel docker builds, one per service
+- GHCR auth uses built-in GITHUB_TOKEN — no external secrets
+- `docker-compose.yml` has both `image:` and `build:` blocks — local dev still builds locally, `docker compose pull` fetches from GHCR
+- Workflow concurrency group cancels in-progress runs on rapid pushes
+
 ## [2025-07-16] ingest | Initial Wiki Bootstrap
 
 **Pages created:**

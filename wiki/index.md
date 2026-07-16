@@ -25,6 +25,7 @@ Catalog of all pages in this wiki. Organized by category. Used by the LLM to loc
 | [[email-retry-strategy]] | Exponential backoff retry (1m→5m→15m→1h→4h) with dead-letter audit trail |
 | [[testing-strategy]] | 112 tests across 3 levels: unit, integration, e2e. Zero Docker dependency at test time. |
 | [[constitution]] | 4 governing principles (Security-First, Concurrency, Decoupling, TDD) |
+| [[ci-cd-pipeline]] | GitHub Actions CI: build, test, Docker build+push to GHCR |
 | [[trade-offs]] | Conscious v1 decisions and what was deferred to future scope |
 
 ## Source Maps
