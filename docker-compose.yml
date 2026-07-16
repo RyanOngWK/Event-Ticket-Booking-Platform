@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   mysql:
     image: mysql:8.0
@@ -82,6 +80,7 @@ services:
       - ticket-network
 
   user-service:
+    image: ghcr.io/ryanongwk/event-ticket-booking-platform/user:latest
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -113,6 +112,7 @@ services:
       - ticket-network
 
   event-service:
+    image: ghcr.io/ryanongwk/event-ticket-booking-platform/event:latest
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -139,6 +139,7 @@ services:
       - ticket-network
 
   ticket-service:
+    image: ghcr.io/ryanongwk/event-ticket-booking-platform/ticket:latest
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -172,6 +173,7 @@ services:
       - ticket-network
 
   email-service:
+    image: ghcr.io/ryanongwk/event-ticket-booking-platform/email:latest
     build:
       context: .
       dockerfile: docker/Dockerfile
