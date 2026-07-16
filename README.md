@@ -51,61 +51,87 @@ Four independently deployable Go microservices, each owning a single bounded con
 
 ### Service Topology
 
-```
-                    ┌──────────┐
-                    │  Client  │
-                    └────┬─────┘
-                         │
-         ┌───────────────┼───────────────┐
-         ▼               ▼               ▼
-   ┌──────────┐   ┌───────────┐   ┌───────────┐
-   │  User    │   │  Event    │   │  Ticket   │
-   │  :8081   │   │  :8082    │   │  :8083    │
-   │  (auth)  │   │  (public) │   │  (auth)   │
-   └────┬─────┘   └───────────┘   └─────┬─────┘
-        │                               │
-        │  user.created                 │  ticket.purchased
-        ▼                               ▼
-   ┌─────────────────────────────────────────┐
-   │               Apache Kafka               │
-   │        (async event backbone)            │
-   └────────────────────┬────────────────────┘
-                        │  ticket.purchased
-                        ▼
-                  ┌───────────┐
-                  │  Email    │
-                  │  :8084    │
-                  │ (consumer)│
-                  └───────────┘
+```mermaid
+graph TD
+    Client --> User
+    Client --> Event
+    Client --> Ticket
 
-   ┌──────────┐            ┌──────────┐
-   │  Redis   │            │  MySQL   │
-   │ sessions │            │  8.0     │
-   │ locks    │            │ 4 DBs    │
-   └──────────┘            └──────────┘
+    User["User<br/>:8081 (auth)"]
+    Event["Event<br/>:8082 (public)"]
+    Ticket["Ticket<br/>:8083 (auth)"]
+
+    subgraph Kafka["Apache Kafka (async event backbone)"]
+        direction LR
+        uc[user.created]
+        tp[ticket.purchased]
+    end
+
+    User -->|"user.created"| Kafka
+    Ticket -->|"ticket.purchased"| Kafka
+
+    Email["Email<br/>:8084 (consumer)"]
+    Kafka -->|"ticket.purchased"| Email
+
+    Redis["Redis<br/>sessions · locks"]
+    MySQL["MySQL 8.0<br/>4 DBs"]
+
+    User -.- Redis
+    Ticket -.- Redis
+    User -.- MySQL
+    Event -.- MySQL
+    Ticket -.- MySQL
+    Email -.- MySQL
 ```
 
 ### Data Flow: Purchase Request
 
-```
-POST /api/v1/tickets/purchase ──────────────────────────────────────────────
-  │
-  ├─ 1. Auth middleware validates Bearer token against Redis session store
-  ├─ 2. Ticket Service acquires Redis lock: "lock:event:{id}" (30s TTL)
-  │     ├─ Failed → HTTP 423 (Locked), client retries
-  ├─ 3. Atomic UPDATE: decrement remaining_count WHERE remaining_count >= qty
-  │     ├─ Zero rows affected → HTTP 409, insufficient tickets
-  ├─ 4. INSERT ticket record (booking_ref + user_id + event_id + qty)
-  ├─ 5. Publish "ticket.purchased" to Kafka (fire-and-forget goroutine)
-  ├─ 6. Release Redis lock
-  └─ 7. Return 201 with booking reference ──────────────────────────────────
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Auth as Auth Middleware
+    participant Ticket as Ticket Service
+    participant Redis
+    participant MySQL
+    participant Kafka
+    participant Email as Email Service
 
-  [Kafka] ──► Email Service consumes ticket.purchased
-                ├─ Check email_status table for duplicate booking_ref
-                ├─ Fetch + decrypt user's email from user_db
-                ├─ Send confirmation via pluggable EmailProvider
-                ├─ On failure: retry with backoff (1m → 5m → 15m → 1h → 4h)
-                └─ After 5 failures: dead-letter, log correlation ID
+    Client->>Ticket: POST /api/v1/tickets/purchase
+    Ticket->>Auth: validate Bearer token
+    Auth->>Redis: GET session:{token}
+    Redis-->>Auth: user context
+
+    Ticket->>Redis: SET lock:event:{id} NX EX 30
+    alt lock acquired
+        Redis-->>Ticket: OK
+    else lock failed
+        Redis-->>Ticket: nil
+        Ticket-->>Client: 423 Locked
+    end
+
+    Ticket->>MySQL: UPDATE events SET remaining_count = remaining_count - qty<br/>WHERE id = ? AND remaining_count >= ?
+    alt zero rows affected
+        MySQL-->>Ticket: 0 rows
+        Ticket->>Redis: RELEASE lock
+        Ticket-->>Client: 409 Sold out
+    else updated
+        MySQL-->>Ticket: 1 row
+        Ticket->>MySQL: INSERT INTO tickets (booking_ref, user_id, event_id, qty)
+        Ticket--)Kafka: PUBLISH ticket.purchased
+        Ticket->>Redis: RELEASE lock
+        Ticket-->>Client: 201 Created { booking_ref }
+
+        Kafka--)Email: consume ticket.purchased
+        Email->>Email: check idempotency (email_status by booking_ref)
+        Email->>MySQL: SELECT email_enc FROM user_db.users
+        Email->>Email: decrypt email, send via EmailProvider
+        alt success
+            Email->>MySQL: UPDATE email_status SET status='sent'
+        else failure
+            Email->>Email: retry with backoff (1m→5m→15m→1h→4h)
+            Note over Email: after 5 failures → dead-letter
+        end
+    end
 ```
 
 ### Design Rationale
@@ -139,18 +165,13 @@ vision; AI agents executed the implementation under strict constraints.
 
 ### The Pipeline
 
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ Constitution │ ─► │    Spec     │ ─► │    Plan     │ ─► │    Tasks    │ ─► │  Implement  │
-│ (principles) │    │ (what/why)  │    │ (how/stack) │    │ (breakdown) │    │  (code)     │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └──────┬──────┘
-                                                                                    │
-                                                                   ┌────────────────┘
-                                                                   ▼
-                                                            ┌─────────────┐
-                                                            │  Converge   │
-                                                            │  (audit)    │
-                                                            └─────────────┘
+```mermaid
+flowchart LR
+    A["Constitution<br/>(principles)"] --> B["Spec<br/>(what/why)"]
+    B --> C["Plan<br/>(how/stack)"]
+    C --> D["Tasks<br/>(breakdown)"]
+    D --> E["Implement<br/>(code)"]
+    E --> F["Converge<br/>(audit)"]
 ```
 
 ### Artifact Traceability
@@ -229,13 +250,15 @@ declared complete.
 
 ### Testing Pyramid
 
+```mermaid
+%%{init: {'theme': 'base'}}%%
+pie showData
+    "E2E (1 test)" : 1
+    "Integration (4 files, 24 tests)" : 4
+    "Unit (16 files, 87 tests)" : 16
 ```
-         ╱  E2E   ╲         1 test:  register → login → browse (cross-service)
-        ╱ Integration ╲      4 files (24 test functions): full HTTP router per service, real middleware
-       ╱   Unit Tests   ╲    16 files (87 test functions): one function, mocked dependencies, <1ms each
-      ────────────────────
-      all run without Docker, MySQL, or Kafka
-```
+
+All run without Docker, MySQL, or Kafka. 21 test files, 112 test functions total.
 
 21 test files (87 unit + 24 integration + 1 e2e = 112 test functions). Zero external dependencies
 at test time.
@@ -402,36 +425,35 @@ HTTP status codes map to semantic outcomes:
 
 ## Project Structure
 
-```
-services/
-├── shared/pkg/             # Cross-cutting libraries
-│   ├── crypto/             # AES-256-GCM encrypt/decrypt + SHA-256 hashing
-│   ├── kafka/              # Typed producer/consumer helpers with event envelope
-│   └── middleware/         # Auth (Redis session), rate limiting, correlation IDs, logging
-├── user/                   # Identity & authentication service
-├── event/                  # Public event catalog service
-├── ticket/                 # Purchase service with distributed locking
-└── email/                  # Async email delivery via Kafka consumer
-
-scripts/
-├── db/init.sql             # 4 MySQL databases, all tables, indexes, constraints
-├── kafka/init-topics.sh    # Topic bootstrap (user.created, ticket.purchased)
-└── seed/seed_events.go     # 6 sample events for local development
-
-specs/001-event-ticket-booking/
-├── spec.md                 # Functional requirements & user stories
-├── plan.md                 # Technical architecture & stack decisions
-├── tasks.md                # 89 implementable tasks across 7 phases
-├── research.md             # Design decision log with rejected alternatives
-├── data-model.md           # Entity schemas, relationships, cross-service access patterns
-├── contracts/              # REST API contracts + Kafka topic schemas
-├── quickstart.md           # Validation scenarios
-└── checklists/             # Spec quality validation checklist
-
-docker-compose.yml          # 4 services + MySQL + Redis + Kafka + Zookeeper
-docker/Dockerfile           # Multi-stage Go build (glibc-based for confluent-kafka-go)
-Makefile                    # up/down/build/test/seed targets
-.specify/memory/            # Project constitution (governing principles)
+```mermaid
+flowchart LR
+    subgraph services["services/"]
+        direction TB
+        shared["shared/pkg/<br/>crypto · kafka · middleware"]
+        user["user/"]
+        event["event/"]
+        ticket["ticket/"]
+        email["email/"]
+    end
+    subgraph scripts["scripts/"]
+        direction TB
+        db["db/init.sql"]
+        kafka_init["kafka/init-topics.sh"]
+        seed["seed/seed_events.go"]
+    end
+    subgraph specs["specs/001-event-ticket-booking/"]
+        direction TB
+        sp["spec.md · plan.md · tasks.md"]
+        rm["research.md · data-model.md"]
+        ct["contracts/ · quickstart.md"]
+    end
+    subgraph infra["Infrastructure"]
+        direction TB
+        dc["docker-compose.yml"]
+        df["docker/Dockerfile"]
+        mk["Makefile"]
+        sm[".specify/memory/<br/>constitution.md"]
+    end
 ```
 
 ---

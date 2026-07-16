@@ -112,36 +112,38 @@ List the authenticated user's purchase history.
 
 ## Purchase Flow (Internal)
 
-```
-Client                  Ticket Service           Redis              MySQL              Kafka
-  │                          │                      │                  │                  │
-  │  POST /tickets/purchase  │                      │                  │                  │
-  │─────────────────────────►│                      │                  │                  │
-  │                          │  ACQUIRE lock:{event} │                  │                  │
-  │                          │─────────────────────►│                  │                  │
-  │                          │  OK / FAIL            │                  │                  │
-  │                          │◄─────────────────────│                  │                  │
-  │                          │      (if FAIL → 423)  │                  │                  │
-  │                          │                      │                  │                  │
-  │                          │  SELECT remaining     │                  │                  │
-  │                          │─────────────────────────────────────────►│                 │
-  │                          │◄──── remaining_count ───────────────────│                  │
-  │                          │                      │                  │                  │
-  │                          │  (if remaining < qty → 409, RELEASE)    │                  │
-  │                          │                      │                  │                  │
-  │                          │  UPDATE remaining     │                  │                  │
-  │                          │─────────────────────────────────────────►│                 │
-  │                          │  INSERT ticket        │                  │                  │
-  │                          │─────────────────────────────────────────►│                 │
-  │                          │                      │                  │                  │
-  │                          │  PUBLISH ticket.purchased               │                  │
-  │                          │──────────────────────────────────────────────────────────►│
-  │                          │                      │                  │                  │
-  │                          │  RELEASE lock:{event} │                  │                  │
-  │                          │─────────────────────►│                  │                  │
-  │                          │                      │                  │                  │
-  │  201 Created             │                      │                  │                  │
-  │◄─────────────────────────│                      │                  │                  │
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Ticket as Ticket Service
+    participant Redis
+    participant MySQL
+    participant Kafka
+
+    Client->>Ticket: POST /api/v1/tickets/purchase
+
+    Ticket->>Redis: ACQUIRE lock:event:{id}
+    alt lock acquired
+        Redis-->>Ticket: OK
+    else lock failed
+        Redis-->>Ticket: FAIL
+        Ticket-->>Client: 423 Locked (retry with backoff)
+    end
+
+    Ticket->>MySQL: SELECT remaining_count FROM events WHERE id = event_id
+    MySQL-->>Ticket: remaining_count
+
+    alt insufficient tickets
+        Ticket->>Redis: RELEASE lock:event:{id}
+        Ticket-->>Client: 409 Conflict (sold out)
+    else tickets available
+        Ticket->>MySQL: UPDATE events SET remaining_count = remaining_count - qty
+        Ticket->>MySQL: INSERT INTO tickets (booking_ref, user_id, event_id, quantity)
+        Ticket->>Kafka: PUBLISH ticket.purchased
+
+        Ticket->>Redis: RELEASE lock:event:{id}
+        Ticket-->>Client: 201 Created { booking_ref }
+    end
 ```
 
 **Error handling**:

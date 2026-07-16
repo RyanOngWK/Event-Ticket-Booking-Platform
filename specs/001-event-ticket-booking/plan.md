@@ -59,77 +59,51 @@ async email delivery (non-blocking), event sourcing via Kafka for audit trail
 
 ### Documentation (this feature)
 
-```text
-specs/001-event-ticket-booking/
-├── plan.md              # This file
-├── research.md          # Phase 0 output
-├── data-model.md        # Phase 1 output
-├── quickstart.md        # Phase 1 output
-├── contracts/           # Phase 1 output
-│   ├── user-service.md
-│   ├── event-service.md
-│   ├── ticket-service.md
-│   └── kafka-topics.md
-└── tasks.md             # Phase 2 output (NOT created by /speckit.plan)
+```mermaid
+flowchart TD
+    subgraph docs["specs/001-event-ticket-booking/"]
+        direction LR
+        plan["plan.md"]
+        research["research.md<br/>(Phase 0)"]
+        datamodel["data-model.md<br/>(Phase 1)"]
+        quickstart["quickstart.md<br/>(Phase 1)"]
+        contracts["contracts/<br/>user · event · ticket · kafka<br/>(Phase 1)"]
+        tasks["tasks.md<br/>(Phase 2)"]
+    end
 ```
 
 ### Source Code (repository root)
 
-```text
-services/
-├── user/
-│   ├── cmd/
-│   │   └── main.go
-│   ├── internal/
-│   │   ├── handler/       # HTTP handlers (register, login, logout)
-│   │   ├── service/       # Business logic (auth, encryption)
-│   │   ├── repository/    # MySQL data access
-│   │   └── model/         # Domain types
-│   └── tests/
-│       ├── unit/
-│       └── integration/
-├── event/
-│   ├── cmd/
-│   │   └── main.go
-│   ├── internal/
-│   │   ├── handler/       # HTTP handlers (list, detail)
-│   │   ├── service/       # Business logic (catalog queries)
-│   │   ├── repository/    # MySQL data access
-│   │   └── model/         # Domain types
-│   └── tests/
-│       ├── unit/
-│       └── integration/
-├── ticket/
-│   ├── cmd/
-│   │   └── main.go
-│   ├── internal/
-│   │   ├── handler/       # HTTP handlers (purchase, history)
-│   │   ├── service/       # Business logic (locking, purchase flow)
-│   │   ├── repository/    # MySQL data access
-│   │   ├── lock/          # Redis distributed lock
-│   │   ├── publisher/     # Kafka producer
-│   │   └── model/         # Domain types
-│   └── tests/
-│       ├── unit/
-│       └── integration/
-├── email/
-│   ├── cmd/
-│   │   └── main.go
-│   ├── internal/
-│   │   ├── consumer/      # Kafka consumer
-│   │   ├── sender/        # Email sending logic
-│   │   ├── repository/    # MySQL (email status tracking)
-│   │   └── model/         # Domain types
-│   └── tests/
-│       ├── unit/
-│       └── integration/
-└── shared/
-    └── pkg/
-        ├── crypto/        # AES-256-GCM encryption utilities
-        ├── kafka/         # Kafka client helpers
-        └── middleware/    # Auth middleware, logging, correlation IDs
-
-docker-compose.yml         # MySQL, Redis, Kafka, Zookeeper + all 4 services
+```mermaid
+flowchart LR
+    subgraph services["services/"]
+        direction TB
+        subgraph user["user/"]
+            u_cmd["cmd/main.go"]
+            u_int["internal/<br/>handler · service · repository · model"]
+            u_tests["tests/<br/>unit · integration"]
+        end
+        subgraph event["event/"]
+            e_cmd["cmd/main.go"]
+            e_int["internal/<br/>handler · service · repository · model"]
+            e_tests["tests/<br/>unit · integration"]
+        end
+        subgraph ticket["ticket/"]
+            t_cmd["cmd/main.go"]
+            t_int["internal/<br/>handler · service · repository · lock · publisher · model"]
+            t_tests["tests/<br/>unit · integration"]
+        end
+        subgraph email["email/"]
+            em_cmd["cmd/main.go"]
+            em_int["internal/<br/>consumer · sender · repository · model"]
+            em_tests["tests/<br/>unit · integration"]
+        end
+        subgraph shared["shared/pkg/"]
+            crypto["crypto/<br/>AES-256-GCM"]
+            kafka_pkg["kafka/<br/>client helpers"]
+            mw["middleware/<br/>auth · logging"]
+        end
+    end
 ```
 
 **Structure Decision**: Monorepo with 4 Go microservices under `services/`. Each service

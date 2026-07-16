@@ -4,33 +4,55 @@
 
 ## Entity Relationship
 
-```
-┌──────────────┐       ┌──────────────────┐       ┌──────────────┐
-│    User      │       │      Event       │       │    Ticket    │
-├──────────────┤       ├──────────────────┤       ├──────────────┤
-│ id (PK)      │       │ id (PK)          │       │ id (PK)      │
-│ name_enc     │       │ name             │       │ booking_ref  │
-│ email_hash   │       │ description      │       │ user_id (FK) │
-│ email_enc    │       │ date             │       │ event_id(FK) │
-│ password_hash│       │ venue            │       │ quantity     │
-│ created_at   │       │ total_capacity   │       │ status       │
-│ updated_at   │       │ remaining_count  │       │ created_at   │
-└──────┬───────┘       │ created_at       │       └──────────────┘
-       │               │ updated_at       │
-       │               └──────────────────┘
-       │
-       │   ┌──────────────────┐
-       └───│   EmailStatus    │
-           ├──────────────────┤
-           │ id (PK)          │
-           │ ticket_id (FK)   │
-           │ user_id (FK)     │
-           │ recipient_hash   │
-           │ status           │
-           │ retry_count      │
-           │ last_attempt_at  │
-           │ created_at       │
-           └──────────────────┘
+```mermaid
+erDiagram
+    User ||--o{ Ticket : "purchases"
+    Event ||--o{ Ticket : "has"
+    User ||--o{ EmailStatus : "receives"
+    Ticket ||--o{ EmailStatus : "triggers"
+
+    User {
+        bigint id PK
+        varbinary name_enc
+        varchar email_hash UK
+        varbinary email_enc
+        varchar password_hash
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    Event {
+        bigint id PK
+        varchar name
+        text description
+        datetime date
+        varchar venue
+        int total_capacity
+        int remaining_count
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    Ticket {
+        bigint id PK
+        char booking_ref UK
+        bigint user_id FK
+        bigint event_id FK
+        int quantity
+        enum status
+        timestamp created_at
+    }
+
+    EmailStatus {
+        bigint id PK
+        bigint ticket_id FK
+        bigint user_id FK
+        varchar recipient_hash
+        enum status
+        int retry_count
+        timestamp last_attempt_at
+        timestamp created_at
+    }
 ```
 
 ## Entities
@@ -121,12 +143,16 @@
 **Indexes**: INDEX on `ticket_id`; INDEX on `status`; INDEX on `last_attempt_at` (for retry scheduling).
 
 **State Transitions**:
-```
-pending → sent       (successful delivery)
-pending → failed     (delivery attempt failed, retry scheduled)
-failed  → pending   (retry initiated)
-failed  → dead       (max retries exceeded, 5 attempts)
-pending → dead       (max age exceeded, 24h without success)
+```mermaid
+stateDiagram-v2
+    [*] --> pending : ticket purchased
+    pending --> sent : successful delivery
+    pending --> failed : delivery failed
+    failed --> pending : retry initiated
+    failed --> dead : max retries (5 attempts)
+    pending --> dead : max age (24h)
+    sent --> [*]
+    dead --> [*]
 ```
 
 **Validation Rules**:
