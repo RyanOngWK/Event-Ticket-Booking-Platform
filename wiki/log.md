@@ -2,6 +2,13 @@
 
 Chronological record of all operations: ingests, queries, lint passes, and structural changes. Append-only. Entries use a consistent date-header prefix for grep-ability.
 
+## [2026-09-22] update | README Trade-offs — Zombie Transaction Note
+
+**Prompt:** Add the zombie-transaction/fencing-token gap to the README's Trade-offs & Future Scope section (explicit user request; README is otherwise raw source).
+
+**Pages updated:**
+- `README.md` - deferred-scope table gained a "Zombie transaction protection" row; Known Technical Debt gained a bullet describing the constant lock value, stale-lease release risk, and the owner-token + monotonic fencing-token fix.
+
 ## [2026-09-22] query | Zombie Transaction Protection in Trade-offs
 
 **Prompt:** Did trade-offs mention the lack of zombie-transaction protection in v1? Include a monotonic fencing token in the future implementation.
