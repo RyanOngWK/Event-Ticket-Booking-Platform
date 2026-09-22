@@ -115,6 +115,7 @@ Full schema: [data-model.md](../specs/001-event-ticket-booking/data-model.md#tic
 - [[distributed-locking]] — the locking strategy
 - [[redis]] — lock store and session validation
 - [[kafka]] — `ticket.purchased` topic
+- [[kafka-producer]] — code walkthrough of the `TicketEventPublisher`
 - [[email-service]] — consumer of purchase events
 - [[event-service]] — event data for purchase validation
 - [[mysql]] — ticket_db and cross-database reads

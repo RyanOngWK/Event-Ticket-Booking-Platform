@@ -47,6 +47,8 @@ Every message includes:
 ## Cross-references
 
 - [[service-decoupling]] — architectural rationale for Kafka
+- [[kafka-producer]] — code walkthrough of the sending side
+- [[kafka-consumer]] — code walkthrough of the reading side
 - [[email-service]] — consumer of `ticket.purchased`
 - [[ticket-service]] — producer of `ticket.purchased`
 - [[user-service]] — producer of `user.created`

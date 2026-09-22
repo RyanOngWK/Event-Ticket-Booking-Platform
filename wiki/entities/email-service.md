@@ -85,6 +85,7 @@ Current implementation: `LogProvider` (stdout). Real SMTP/SendGrid is a deploy-t
 
 - [[email-retry-strategy]] — detailed retry and dead-letter design
 - [[kafka]] — consumer group, offset management
+- [[kafka-consumer]] — code walkthrough of the `HandleTicketPurchased` handler
 - [[ticket-service]] — producer of `ticket.purchased` events
 - [[mysql]] — email_db schema and cross-database user email read
 - [[pii-encryption]] — email decryption at read time

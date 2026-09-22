@@ -61,6 +61,8 @@ Every message includes:
 
 - [[constitution]] — Principle III (Service Decoupling)
 - [[kafka]] — the async backbone
+- [[kafka-producer]] — how events get onto topics
+- [[kafka-consumer]] — how events are consumed and acknowledged
 - [[ticket-service]] — producer of purchase events
 - [[email-service]] — consumer of purchase events
 - [[user-service]] — producer of registration events

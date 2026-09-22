@@ -24,9 +24,11 @@ Catalog of all pages in this wiki. Organized by category. Used by the LLM to loc
 | [[session-management]] | Redis-backed opaque session tokens with rolling TTL refresh |
 | [[email-retry-strategy]] | Exponential backoff retry (1m→5m→15m→1h→4h) with dead-letter audit trail |
 | [[testing-strategy]] | 112 tests across 3 levels: unit, integration, e2e. Zero Docker dependency at test time. |
+| [[kafka-producer]] | Code walkthrough of the sending side — shared Producer, publishers, envelope format |
+| [[kafka-consumer]] | Code walkthrough of the reading side — Consume loop, offset commits, email handler |
 | [[constitution]] | 4 governing principles (Security-First, Concurrency, Decoupling, TDD) |
 | [[ci-cd-pipeline]] | GitHub Actions CI: build, test, Docker build+push to GHCR |
-| [[trade-offs]] | Conscious v1 decisions and what was deferred to future scope |
+| [[trade-offs]] | Resume-ready architecture decision record: v1 benefits, costs, code gaps, and production evolution |
 
 ## Source Maps
 
