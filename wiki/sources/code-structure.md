@@ -46,7 +46,7 @@ flowchart LR
 | `services/ticket/` | [[ticket-service]] | handler, service, repository, models, lock manager |
 | `services/email/` | [[email-service]] | consumer handler, email provider interface, status repository |
 | `services/shared/pkg/crypto/` | [[pii-encryption]] | encrypt, decrypt, hash functions |
-| `services/shared/pkg/kafka/` | [[kafka]], [[service-decoupling]] | producer, consumer, event envelope types |
+| `services/shared/pkg/kafka/` | [[kafka]], [[service-decoupling]], [[kafka-producer]], [[kafka-consumer]] | producer, consumer, event envelope types |
 | `services/shared/pkg/middleware/` | [[session-management]] | auth middleware (Redis lookup), rate limiter, request logging |
 
 ## Test Files

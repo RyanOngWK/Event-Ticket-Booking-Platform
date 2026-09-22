@@ -292,6 +292,7 @@ Every architecture is a series of trade-offs. Here are the ones we made consciou
 | **gRPC between services** | Cross-service reads use shared MySQL (same Docker network) | Premature optimization; shared DB reads are acceptable for v1; future: add service-to-service APIs |
 | **Production monitoring** | Structured logging with correlation IDs; no metrics/alerting | Logging provides debug trail; metrics require infrastructure (Prometheus/Grafana) not needed at MVP stage |
 | **Configurable email provider** | LogProvider (stdout) implemented; real SMTP/SendGrid is a swap-in | Provider interface is pluggable; real provider config is a deploy-time concern, not a code concern |
+| **Zombie transaction protection** | Redis lock uses a constant value; no ownership or fencing token | A request whose 30s lease expires can delete another request's lock and keep running against mutated state; fix: random owner token per acquisition plus a monotonic fencing token enforced by the conditional SQL decrement |
 
 ### Known Technical Debt (Documented)
 
@@ -300,6 +301,11 @@ Every architecture is a series of trade-offs. Here are the ones we made consciou
 - `docker/Dockerfile` uses Debian base image (glibc) to avoid Alpine musl linker issues with the
   confluent-kafka-go C library. The dependency on a vendored C library for Kafka is the only
   non-Go-native component in the stack.
+- The Redis lock has no zombie-transaction protection: the lock value is a constant, so a stale
+  lease holder whose 30s TTL expired can release a lock acquired by another request. The SQL
+  conditional decrement still prevents negative inventory, but mutual exclusion is not reliable.
+  Future fix: a cryptographically random owner token per acquisition plus a monotonic fencing
+  token that the SQL decrement compares before applying.
 
 ---
 

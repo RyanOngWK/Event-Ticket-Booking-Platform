@@ -65,6 +65,7 @@ Full schema: [data-model.md](../specs/001-event-ticket-booking/data-model.md#use
 - [[redis]] — session store
 - [[mysql]] — user_db schema
 - [[kafka]] — `user.created` topic
+- [[kafka-producer]] — code walkthrough of the `UserEventPublisher`
 - [[constitution]] — Principle I (Security-First)
 - [[event-service]] — companion public-facing service
 - [[sources/specs]] — traceability to spec requirements
