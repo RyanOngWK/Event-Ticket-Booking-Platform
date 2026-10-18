@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS events (
     CONSTRAINT chk_remaining CHECK (remaining_count >= 0 AND remaining_count <= total_capacity)
 );
 
+CREATE TABLE IF NOT EXISTS event_fencing_tokens (
+    event_id BIGINT UNSIGNED PRIMARY KEY,
+    last_issued_token BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_accepted_token BIGINT UNSIGNED NOT NULL DEFAULT 0
+) ENGINE=InnoDB;
+
 USE ticket_db;
 CREATE TABLE IF NOT EXISTS tickets (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -47,6 +53,21 @@ CREATE TABLE IF NOT EXISTS tickets (
     INDEX idx_created_at (created_at),
     CONSTRAINT chk_quantity CHECK (quantity > 0)
 );
+
+CREATE TABLE IF NOT EXISTS outbox_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    event_id VARCHAR(64) NOT NULL UNIQUE,
+    topic VARCHAR(255) NOT NULL,
+    message_key VARCHAR(255) NOT NULL,
+    payload JSON NOT NULL,
+    attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    available_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    locked_until DATETIME NULL,
+    published_at DATETIME NULL,
+    last_error VARCHAR(1000) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_outbox_pending (published_at, available_at, locked_until, id)
+) ENGINE=InnoDB;
 
 USE email_db;
 CREATE TABLE IF NOT EXISTS email_status (

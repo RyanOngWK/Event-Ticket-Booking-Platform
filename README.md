@@ -35,7 +35,7 @@ Four independently deployable Go microservices, each owning a single bounded con
 |---------|---------------|-----------------|
 | **User** | Identity, authentication, PII management | AES-256-GCM encryption at application layer; never log plaintext PII |
 | **Event** | Public catalog of upcoming events | Read-only to unauthenticated visitors; pagination without N+1 queries |
-| **Ticket** | Purchase flow with distributed locking | Redis-based distributed lock (per-event `SETNX` with Lua-script safe release); atomic inventory decrement; zero double-sells |
+| **Ticket** | Purchase flow with distributed locking and durable event delivery | Redlock quorum plus MySQL fencing; inventory decrement, ticket insert, and Kafka outbox record commit together; relay publishes asynchronously with retry |
 | **Email** | Async confirmation delivery | Kafka consumer with idempotency; exponential backoff retry; dead-letter audit trail |
 
 ### Key Metrics
@@ -101,7 +101,7 @@ sequenceDiagram
     Auth->>Redis: GET session:{token}
     Redis-->>Auth: user context
 
-    Ticket->>Redis: SET lock:event:{id} NX EX 30
+    Ticket->>Redis: acquire five-master Redlock lease (30s)
     alt lock acquired
         Redis-->>Ticket: OK
     else lock failed
@@ -109,15 +109,17 @@ sequenceDiagram
         Ticket-->>Client: 423 Locked
     end
 
-    Ticket->>MySQL: UPDATE events SET remaining_count = remaining_count - qty<br/>WHERE id = ? AND remaining_count >= ?
+    Ticket->>MySQL: allocate fencing token, then conditional update in transaction
     alt zero rows affected
         MySQL-->>Ticket: 0 rows
         Ticket->>Redis: RELEASE lock
         Ticket-->>Client: 409 Sold out
     else updated
         MySQL-->>Ticket: 1 row
-        Ticket->>MySQL: INSERT INTO tickets (booking_ref, user_id, event_id, qty)
-        Ticket--)Kafka: PUBLISH ticket.purchased
+        Ticket->>MySQL: INSERT ticket_db.tickets
+        Ticket->>MySQL: INSERT ticket_db.outbox_events
+        Ticket->>MySQL: COMMIT inventory + ticket + outbox
+        Relay->>Kafka: publish committed outbox row with retry
         Ticket->>Redis: RELEASE lock
         Ticket-->>Client: 201 Created { booking_ref }
 
@@ -142,10 +144,12 @@ AES-256-GCM gives us column-level control, database agnosticism, and key managem
 the database tier. The architecture supports upgrading to AWS KMS / HashiCorp Vault without code
 changes.
 
-**Why a Redis-based distributed lock over PostgreSQL advisory locks** — Advisory locks tie the lock lifecycle to a
-database connection. In a microservice architecture where the lock holder may be a different process
-from the DB connection owner, this breaks. Redis is connection-agnostic, purpose-built for
-distributed mutual exclusion, and already in our stack for session management.
+**Why Redlock for ticket-purchase coordination** — The lock is acquired on a majority of five
+Redis masters, so one unavailable master does not by itself stop purchases. These Compose
+containers share one host and are a local demonstration, not independent production failure
+domains. The lock is a time-limited lease, not the source of booking correctness: the conditional
+inventory update also records the latest accepted fencing token. The inventory decrement and ticket
+insert still are not one transaction; that is a separate booking-atomicity improvement.
 
 **Why Kafka over direct HTTP between services** — Synchronous HTTP calls couple service
 availability. If the email service is down during a purchase spike, the purchase response blocks,
@@ -292,7 +296,7 @@ Every architecture is a series of trade-offs. Here are the ones we made consciou
 | **gRPC between services** | Cross-service reads use shared MySQL (same Docker network) | Premature optimization; shared DB reads are acceptable for v1; future: add service-to-service APIs |
 | **Production monitoring** | Structured logging with correlation IDs; no metrics/alerting | Logging provides debug trail; metrics require infrastructure (Prometheus/Grafana) not needed at MVP stage |
 | **Configurable email provider** | LogProvider (stdout) implemented; real SMTP/SendGrid is a swap-in | Provider interface is pluggable; real provider config is a deploy-time concern, not a code concern |
-| **Zombie transaction protection** | Redis lock uses a constant value; no ownership or fencing token | A request whose 30s lease expires can delete another request's lock and keep running against mutated state; fix: random owner token per acquisition plus a monotonic fencing token enforced by the conditional SQL decrement |
+| **Transactional outbox** | Inventory decrement, ticket insert, and event outbox row commit in one transaction on the shared MySQL instance; a background relay publishes to Kafka | Database-to-Kafka delivery is at least once: a crash after broker acknowledgment but before marking the row published can cause a duplicate. Consumers must remain idempotent. |
 
 ### Known Technical Debt (Documented)
 
@@ -301,11 +305,11 @@ Every architecture is a series of trade-offs. Here are the ones we made consciou
 - `docker/Dockerfile` uses Debian base image (glibc) to avoid Alpine musl linker issues with the
   confluent-kafka-go C library. The dependency on a vendored C library for Kafka is the only
   non-Go-native component in the stack.
-- The Redis lock has no zombie-transaction protection: the lock value is a constant, so a stale
-  lease holder whose 30s TTL expired can release a lock acquired by another request. The SQL
-  conditional decrement still prevents negative inventory, but mutual exclusion is not reliable.
-  Future fix: a cryptographically random owner token per acquisition plus a monotonic fencing
-  token that the SQL decrement compares before applying.
+- Redlock uses owner-specific random values and a 30s lease. Ticket Service allocates a monotonic
+  MySQL fencing token before lock acquisition and the inventory update records it only when it is
+  newer than the last accepted token. Inventory decrement, ticket insertion, and the outbox record
+  now share one MySQL transaction. The relay publishes at least once, so duplicate Kafka messages
+  remain possible and consumers need durable idempotency.
 
 ---
 
@@ -326,6 +330,8 @@ cp .env.example .env
 # Then edit .env and paste it as the ENCRYPTION_KEY value
 docker compose up -d
 docker compose ps          # wait for all services to show "healthy"
+make migrate-fencing      # apply the idempotent fencing-token schema upgrade
+make migrate-outbox       # create the durable ticket event outbox table
 make seed                  # insert 6 sample events (including one sold-out)
 ```
 

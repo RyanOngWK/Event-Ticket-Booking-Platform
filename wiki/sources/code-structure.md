@@ -2,8 +2,8 @@
 title: "Source Map: Code Structure"
 category: "source-map"
 tags: [sources, code, go, services, structure]
-source_count: 3
-updated: 2025-07-16
+source_count: 4
+updated: 2026-10-18
 ---
 
 # Source Map: Code Structure
@@ -25,7 +25,7 @@ flowchart LR
         end
         svc_user["user/<br/>identity · auth"]
         svc_event["event/<br/>public catalog"]
-        svc_ticket["ticket/<br/>purchase · locking"]
+        svc_ticket["ticket/<br/>purchase · locking · outbox relay"]
         svc_email["email/<br/>Kafka consumer"]
         svc_e2e["e2e/<br/>cross-service test"]
     end
@@ -43,7 +43,7 @@ flowchart LR
 |-----------|-----------|-----------|
 | `services/user/` | [[user-service]] | handler, service, repository, models |
 | `services/event/` | [[event-service]] | handler, service, repository, models |
-| `services/ticket/` | [[ticket-service]] | handler, service, repository, models, lock manager |
+| `services/ticket/` | [[ticket-service]] | handler, transactional booking service, ticket repository, five-master Redlock, fencing, and outbox relay |
 | `services/email/` | [[email-service]] | consumer handler, email provider interface, status repository |
 | `services/shared/pkg/crypto/` | [[pii-encryption]] | encrypt, decrypt, hash functions |
 | `services/shared/pkg/kafka/` | [[kafka]], [[service-decoupling]], [[kafka-producer]], [[kafka-consumer]] | producer, consumer, event envelope types |

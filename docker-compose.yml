@@ -30,6 +30,54 @@ services:
     networks:
       - ticket-network
 
+  redlock2:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticket-network
+
+  redlock3:
+    image: redis:7-alpine
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticket-network
+
+  redlock4:
+    image: redis:7-alpine
+    ports:
+      - "6382:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticket-network
+
+  redlock5:
+    image: redis:7-alpine
+    ports:
+      - "6383:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticket-network
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: ticket-zookeeper
@@ -156,11 +204,20 @@ services:
       EVENT_DB_DSN: root:rootpassword@tcp(mysql:3306)/event_db?parseTime=true
       USER_DB_DSN: root:rootpassword@tcp(mysql:3306)/user_db?parseTime=true
       REDIS_ADDR: redis:6379
+      REDLOCK_ADDRS: redis:6379,redlock2:6379,redlock3:6379,redlock4:6379,redlock5:6379
       KAFKA_BROKERS: kafka:9092
     depends_on:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redlock2:
+        condition: service_healthy
+      redlock3:
+        condition: service_healthy
+      redlock4:
+        condition: service_healthy
+      redlock5:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully

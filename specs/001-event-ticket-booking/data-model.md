@@ -104,7 +104,17 @@ erDiagram
 - `total_capacity`: > 0
 - `remaining_count`: >= 0, initially equal to `total_capacity`
 
-### Ticket Service Database (`ticket_db`)
+### Fencing Token Table (event_db.event_fencing_tokens)
+
+| Column | Type | Constraints | Description |
+|---------|------|-------------|-------------|
+| event_id | BIGINT UNSIGNED | PK | Event whose booking writes use this counter |
+| last_issued_token | BIGINT UNSIGNED | NOT NULL | Monotonically increasing token allocated before lock acquisition |
+| last_accepted_token | BIGINT UNSIGNED | NOT NULL | Highest token accepted by the inventory update |
+
+The Ticket Service increments last_issued_token on a pinned MySQL connection and carries the result through the Redlock-protected operation. The conditional inventory update also requires the token to exceed last_accepted_token, then stores it in the same SQL statement. Failed lock attempts may leave gaps; gaps do not affect ordering.
+
+### Ticket Service Database (ticket_db)
 
 **Table: `tickets`**
 

@@ -2,8 +2,8 @@
 title: "MySQL"
 category: "entity"
 tags: [infrastructure, database, storage, schema]
-source_count: 7
-updated: 2025-07-16
+source_count: 8
+updated: 2026-10-18
 ---
 
 # MySQL
@@ -17,8 +17,8 @@ MySQL 8.0 is the primary data store. A single Docker container hosts 4 logically
 | Database | Owner | Key Tables |
 |----------|-------|------------|
 | `user_db` | [[user-service]] | `users` |
-| `event_db` | [[event-service]] | `events` |
-| `ticket_db` | [[ticket-service]] | `tickets` |
+| `event_db` | [[event-service]] | `events`, `event_fencing_tokens` (Ticket Service writes fencing state) |
+| `ticket_db` | [[ticket-service]] | `tickets`, `outbox_events` |
 | `email_db` | [[email-service]] | `email_status` |
 
 ## Schema Details
@@ -30,7 +30,9 @@ See [data-model.md](../specs/001-event-ticket-booking/data-model.md) for full en
 - `user_db.users` stores PII (name, email) as `VARBINARY(512)` — encrypted at the application layer, not in MySQL. See [[pii-encryption]].
 - `user_db.users.email_hash` is a SHA-256 hash — enables duplicate email detection without decrypting.
 - `event_db.events.remaining_count` has a CHECK constraint: >= 0 AND <= total_capacity.
+- `event_db.event_fencing_tokens` tracks the highest token issued and accepted for each event; Ticket Service uses it to fence stale writes.
 - `ticket_db.tickets.booking_ref` is CHAR(12) with format `TBK-{8 alphanumeric}`, UNIQUE constraint.
+- `ticket_db.outbox_events` stores the stable Kafka envelope and retry/lease metadata. Ticket Service commits it together with inventory and ticket writes using one transaction on this shared MySQL instance.
 - `email_db.email_status` tracks an ENUM state machine: pending → sent | failed → dead.
 
 ## Cross-Service Data Access (v1)
@@ -48,6 +50,7 @@ Tagged `TODO(v2)` — future iteration should use service APIs instead of direct
 
 - **Dedicated databases over shared schema** — provides logical isolation, makes future extraction to separate instances straightforward. See research: [Database Schema Design](../specs/001-event-ticket-booking/research.md#7-database-schema-design).
 - **Single instance, multiple databases** — a pragmatic v1 choice. Separate MySQL instances per service would be more "pure" microservices but adds infrastructure overhead. Docker Compose runs one MySQL container.
+- **Cross-schema booking transaction** — Ticket Service opens a transaction on the shared server and updates `event_db.events` plus `ticket_db.tickets` and `ticket_db.outbox_events`. This atomicity does not extend across separate MySQL servers.
 - **No stored procedures or triggers** — all logic lives in the Go application layer. MySQL is a passive store.
 
 ## Cross-references

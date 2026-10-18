@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/example/ticket-platform/services/shared/pkg/kafka"
 )
@@ -10,6 +11,7 @@ type TicketEventPublisher struct {
 	producer *kafka.Producer
 }
 
+// NewTicketEventPublisher creates the Ticket Service's Kafka publisher.
 func NewTicketEventPublisher(brokers string) (*TicketEventPublisher, error) {
 	p, err := kafka.NewProducer(brokers)
 	if err != nil {
@@ -28,7 +30,14 @@ type TicketPurchasedPayload struct {
 	Quantity   int    `json:"quantity"`
 }
 
+// PublishTicketPurchased builds and directly publishes a ticket purchase event.
 func (p *TicketEventPublisher) PublishTicketPurchased(bookingRef string, userID, eventID uint64, eventName, eventDate, venue string, quantity int, correlationID string) error {
+	event := NewTicketPurchasedEvent(bookingRef, userID, eventID, eventName, eventDate, venue, quantity, correlationID)
+	return p.producer.PublishEnvelope("ticket.purchased", bookingRef, event)
+}
+
+// NewTicketPurchasedEvent builds a stable-shaped envelope for the outbox record.
+func NewTicketPurchasedEvent(bookingRef string, userID, eventID uint64, eventName, eventDate, venue string, quantity int, correlationID string) kafka.EventEnvelope {
 	payload := TicketPurchasedPayload{
 		BookingRef: bookingRef,
 		UserID:     userID,
@@ -38,9 +47,21 @@ func (p *TicketEventPublisher) PublishTicketPurchased(bookingRef string, userID,
 		Venue:      venue,
 		Quantity:   quantity,
 	}
-	return p.producer.Publish("ticket.purchased", bookingRef, "ticket.purchased", correlationID, payload)
+	return kafka.EventEnvelope{
+		EventID:       fmt.Sprintf("evt_%d", time.Now().UTC().UnixNano()),
+		EventType:     "ticket.purchased",
+		Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
+		CorrelationID: correlationID,
+		Payload:       payload,
+	}
 }
 
+// PublishEnvelope sends a previously constructed event envelope to Kafka.
+func (p *TicketEventPublisher) PublishEnvelope(topic, key string, event kafka.EventEnvelope) error {
+	return p.producer.PublishEnvelope(topic, key, event)
+}
+
+// Close flushes and releases the underlying Kafka producer.
 func (p *TicketEventPublisher) Close() {
 	p.producer.Close()
 }

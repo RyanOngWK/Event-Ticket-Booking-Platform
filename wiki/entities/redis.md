@@ -2,15 +2,15 @@
 title: "Redis"
 category: "entity"
 tags: [infrastructure, cache, sessions, distributed-locking]
-source_count: 7
-updated: 2025-07-16
+source_count: 8
+updated: 2026-10-18
 ---
 
 # Redis
 
 ## Overview
 
-Redis serves dual roles in this architecture: **session store** for authentication and **distributed lock manager** for ticket purchase concurrency control. It was already in the stack for sessions, so adding locking didn't introduce a new infrastructure component.
+Redis serves as the **session store** and as the **Redlock lease layer** for ticket-purchase contention. Five independent Redis master processes are configured for the lock quorum; the first node is also used for sessions. Compose places all nodes on one host, so they are not production fault domains.
 
 ## Roles
 
@@ -21,19 +21,17 @@ Redis serves dual roles in this architecture: **session store** for authenticati
 - Instant revocation on logout (DELETE key)
 - Auth middleware reads `Authorization: Bearer <token>`, looks up in Redis, injects user context
 
-### 2. Distributed Lock Manager
+### 2. Redlock Lease Layer
 
-- Lock key pattern: `lock:event:{event_id}`
-- Implementation: `SET lock:event:{id} {instance_id} NX EX 30`
-  - `NX` — only set if key doesn't exist (atomic lock acquisition)
-  - `EX 30` — 30-second TTL prevents deadlock if lock holder crashes
-- Safe release: Lua script checks that the value matches before deleting (prevents releasing another instance's lock)
-- Retry with exponential backoff: 3 attempts (50ms, 100ms, 200ms) before returning HTTP 423
+- Lock key pattern: lock:event:{event_id}
+- Ticket Service coordinates a majority of five Redis masters with a 30-second lease.
+- Each acquisition uses a unique owner value; release only removes that acquisition's own lock.
+- MySQL fencing tokens, not Redis, reject stale booking writes after a higher token has been accepted.
 
 ## Configuration
 
-- Docker Compose: Redis container on `redis:6379`
-- Used by: [[user-service]] (sessions), [[ticket-service]] (locks, also validates sessions)
+- Docker Compose: session Redis at `redis:6379` plus four additional Redlock masters; all five nodes share one Compose host
+- Used by: [[user-service]] (sessions), [[ticket-service]] (Redlock leases and session validation)
 
 ## Key Decisions
 

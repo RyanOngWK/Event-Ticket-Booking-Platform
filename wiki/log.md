@@ -1,5 +1,35 @@
 # Wiki Log
 
+## [2026-10-18] update | Transactional Booking and Kafka Outbox
+
+**Prompt:** Implement stage three: make inventory decrement, ticket creation, and Kafka event intent atomic.
+
+**Pages updated:**
+- `entities/ticket-service.md`, `entities/mysql.md`, and `overview.md` - document the shared-MySQL transaction and asynchronous outbox relay.
+- `concepts/trade-offs.md` - replace the cross-database partial-write gap with the current shared-instance boundary and at-least-once delivery trade-off.
+- `index.md` and `sources/code-structure.md`, `sources/config-files.md` - refresh summaries and source mappings.
+
+**Key insights:**
+- Inventory, ticket, and the stable event envelope now commit in one transaction across `event_db` and `ticket_db` on the shared MySQL server.
+- The relay claims rows with a lease, retries failures with backoff, and marks successful delivery. A crash after Kafka acknowledgment may cause a duplicate; delivery is at least once.
+- Moving the schemas to separate database servers requires a saga/reservation flow or a new ownership boundary; this local transaction cannot span servers.
+
+## [2026-10-18] update | Ticket Purchase Fencing Token
+
+**Prompt:** Implement stage two of the purchase-correctness plan by adding a fencing token after Redlock.
+
+**Pages updated:**
+- concepts/distributed-locking.md - documents five-master Redlock, pre-acquisition MySQL token allocation, acceptance checks, and remaining atomicity limits.
+- entities/ticket-service.md, entities/redis.md, entities/mysql.md, and overview.md - describe the implemented lock and fencing flow.
+- concepts/trade-offs.md and index.md - replace stale single-node/no-fencing claims.
+- sources/specs.md, sources/config-files.md, and sources/code-structure.md - map the data-model addition, migration, Redis nodes, and Ticket Service implementation.
+
+**Key insights:**
+- MySQL issues monotonic per-event tokens before Redlock acquisition; failed lock attempts may leave gaps.
+- The inventory update stores the highest accepted token and rejects an older token after a newer one has been accepted.
+- Inventory decrement and ticket insertion are still separate; stage three remains a transactional booking plus outbox.
+
+
 Chronological record of all operations: ingests, queries, lint passes, and structural changes. Append-only. Entries use a consistent date-header prefix for grep-ability.
 
 ## [2026-09-22] update | README Trade-offs — Zombie Transaction Note
