@@ -2,8 +2,8 @@
 title: "Architecture Trade-offs: Resume Deep Dive"
 category: "concept"
 tags: [trade-offs, architecture, technical-debt, interview-preparation, v1-scope]
-source_count: 14
-updated: 2026-09-22
+source_count: 15
+updated: 2026-10-18
 ---
 
 # Architecture Trade-offs: Resume Deep Dive
@@ -21,7 +21,7 @@ The useful framing is not "I used microservices, Kafka, Redis, and encryption." 
 | Four-service Go monorepo | Clear domain boundaries with fast iteration | Shared module and packages couple releases | Split modules/repos only when team ownership and release cadence diverge |
 | One MySQL instance with four databases | Logical data ownership without four operational stacks | Shared credentials and failure domain | Separate instances, service accounts, backups, and independent scaling |
 | Redis lock plus conditional SQL decrement | Low-contention purchase handling and a database safety invariant | Hot events serialize; lock lease correctness matters | Make SQL/reservations the authority; use ownership tokens or queue allocation |
-| Kafka for confirmation email | Fast purchase response despite email-provider outages | DB write and event publish are not atomic | Transactional outbox or CDC |
+| Kafka for confirmation email | Fast purchase response despite email-provider outages | At-least-once delivery requires consumer deduplication | Monitor outbox backlog and deduplicate by stable event ID |
 | AES-256-GCM application encryption | Column-level PII protection without MySQL Enterprise | Key lifecycle and searchable encrypted data remain hard | KMS/Vault envelope encryption, rotation, keyed lookup hashes |
 | Opaque Redis sessions | Immediate logout and centralized revocation | Redis is on every authenticated request | Add user session index and absolute lifetime; assess short-lived JWTs only if needed |
 | Docker Compose and mock-heavy tests | Reproducible, fast development feedback | Limited evidence for real distributed infrastructure | Add a smaller real MySQL/Redis/Kafka CI lane |
@@ -36,7 +36,7 @@ Use this structure for any decision:
 4. Name the failure mode, scaling limit, or coupling it introduced.
 5. Describe the observable signal that would cause an upgrade and the next design.
 
-Example: "Ticket inventory was the only strongly consistent business invariant, so I accepted serialization per event and used a conditional SQL decrement as the final guard. That keeps inventory non-negative even if the lock layer misbehaves. The cost is that a highly popular event becomes a hot key and the ticket write is not atomically coupled to the inventory update. At higher volume I would introduce explicit reservations and an outbox, or serialize allocations through a partitioned queue."
+Example: "Ticket inventory was the main strongly consistent invariant, so I used a conditional SQL decrement as the final guard. Inventory, ticket creation, and the event outbox now commit together on the shared MySQL instance. The cost is a cross-schema transaction and at-least-once Kafka delivery, so consumers must deduplicate. If the schemas move to separate servers, I would use a reservation saga or move inventory ownership."
 
 Do not overclaim. The specifications describe a Redlock-style lock, per-user derived encryption keys, idempotency keys, and completed dead-letter behavior. The current implementation does not fully realize those claims; the implementation notes below describe the code as it exists.
 
@@ -80,39 +80,37 @@ Do not overclaim. The specifications describe a Redlock-style lock, per-user der
 
 ## Purchase Correctness And Concurrency
 
-### Redis serialization plus conditional SQL inventory update
+### Redlock quorum and database fencing
 
-**Choice.** Ticket Service acquires a per-event Redis lock with `SET NX EX 30`, then executes a conditional update equivalent to `remaining_count = remaining_count - quantity WHERE remaining_count >= quantity`, and then inserts the ticket. See [[distributed-locking]] and `services/ticket/internal/service/purchase_service.go`.
+**Choice.** Ticket Service allocates a monotonic MySQL fencing token before trying a per-event Redlock lease across five Redis masters. It then executes one conditional SQL statement that decrements inventory and records the token only if it exceeds the last accepted token; ticket insertion follows separately.
 
-**Benefit.** The conditional update is the important database-level invariant: no successful update can drive remaining inventory negative. The event-scoped lock reduces concurrent work and produces a prompt `423 Locked` under contention rather than allowing many requests to race through business logic. A 30-second lease bounds a stuck lock.
+**Benefit.** Redlock reduces contention and tolerates one unavailable Redis master in the configured five-node quorum. The database rejects an older fencing token after it has accepted a newer one.
 
-**Cost.** A lock per event serializes all purchasers of the same popular event, including purchasers who could otherwise buy different remaining seats. Redis adds another critical dependency. Lock acquisition fails immediately rather than queueing or retrying, shifting backoff work to clients. The lock layer controls contention but is not the sole correctness proof; the SQL predicate is.
+**Cost.** Compose nodes share a host. Failed lock attempts consume token values, creating harmless gaps. The booking transaction currently relies on both schemas being on one MySQL server.
 
-**Alternative.** Rely on optimistic conditional updates alone; use a database row lock in a single transactional store; introduce individual seats; or partition allocation requests through a queue. Each changes the throughput, latency, complexity, and user-experience profile.
+**Next step.** Monitor outbox retry age and add durable consumer deduplication by the stable event ID.
 
-**When to change.** Monitor lock-conflict rate, purchase latency, and hot-event throughput. If the event lock becomes a bottleneck, use a reservation model or queue-based allocation rather than merely sharding a lock, because inventory remains a shared finite resource.
+### Redlock lease plus database fencing
 
-### The lock is a single-node lease, not Redlock
+**Current implementation.** Ticket Service uses five Redis masters through Redsync, with a 30-second lease and a unique random owner value. It allocates a monotonic token from MySQL before attempting lock acquisition; failed attempts can create gaps. The inventory update carries the token and records it only when it exceeds the database's last accepted token.
 
-**Current implementation.** Despite older documentation calling it Redlock, `services/ticket/internal/lock/redis_lock.go` uses one Redis instance, no quorum, no acquisition retry, no fencing token, and a constant lock value of `"locked"`. v1 has no zombie-transaction protection: a request whose lease expired can keep running and act on state it no longer owns.
+**Benefit.** A paused request with an older token is rejected after MySQL accepts a newer token. The lock reduces contention, while the database remembers the accepted token and protects the storage boundary.
 
-**Risk.** This leaves the classic zombie-transaction window open: if request A exceeds its 30-second TTL, request B can acquire the same key. A's deferred Lua release can then delete B's lock because both use the same value, and A resumes execution against state B already mutated. The conditional SQL decrement still prevents negative inventory, but mutual exclusion is no longer reliable and the system does unnecessary concurrent work.
+**Limits.** Redlock is still a lease and does not itself produce fencing tokens. The Compose nodes share a host. Fencing compares writes against the highest token already accepted; an old write that reaches MySQL before a newer token is accepted may be applied first. The cross-schema commit depends on a single MySQL instance.
 
-**Fix.** Generate a cryptographically random owner token per acquisition and release only when that token matches. To close the zombie window outright, also issue a monotonic fencing token on every acquisition and require the SQL decrement to carry it: MySQL rejects any write whose fencing token is older than the last one it accepted, so a resumed zombie cannot mutate inventory even if it still holds a stale lock. For the strongest correctness story, make a transactional inventory/reservation store the authority and treat Redis only as a contention optimization.
+**Next step.** Keep token enforcement and the cross-schema booking transaction, then monitor the relay and make consumer deduplication durable.
 
-**Interview phrasing.** "I would not describe the current code as Redlock. It is a single-Redis lease plus a SQL guard with no zombie-transaction protection. I know the distinction and would add ownership tokens plus a monotonic fencing token before production."
+**Interview phrasing.** "Redlock helps with lock availability and contention. A monotonic MySQL fencing token lets the database reject an older writer after a newer token has been accepted. Inventory, ticket creation, and event intent commit together; the relay gives at-least-once delivery, so consumers deduplicate by event ID."
 
-### Cross-database purchase atomicity
+### Cross-schema booking transaction
 
-**Choice.** Availability is decremented in `event_db`; the ticket record is inserted in `ticket_db`. These occur as separate operations rather than one transaction or a saga.
+**Choice.** On the current shared MySQL server, one transaction decrements inventory in `event_db`, inserts the ticket in `ticket_db`, and writes a `ticket.purchased` outbox row in `ticket_db`.
 
-**Benefit.** It respects the intended database ownership split and avoids distributed-transaction infrastructure in v1.
+**Benefit.** A failure at any point before commit rolls back inventory, ticket, and event intent together. The transaction avoids the prior partial-booking and database-to-Kafka dual-write gaps.
 
-**Cost.** If decrement succeeds and ticket insertion fails, inventory is consumed without a ticket. Conversely, retries need an idempotency boundary to prevent accidental repeat behavior. The system has no compensation record or reservation timeout for this failure window.
+**Cost.** Atomicity depends on these schemas remaining on the same transactional MySQL server and on Ticket Service having cross-schema write access. It couples service data ownership at the database boundary.
 
-**Alternative.** Co-locate inventory and ticket records in one transactional service, use a reservation state machine with expiry and compensation, or use a saga with an outbox. Two-phase commit would provide stronger atomicity but is usually avoided for availability and operational complexity.
-
-**When to change.** This is the highest-value correctness improvement after preserving the non-negative inventory predicate. Add a purchase idempotency key and a reservation/outbox flow before handling payments or offering strong booking guarantees.
+**Alternative.** If service databases move to separate servers, use a reservation state machine/saga with compensation or move inventory ownership into Ticket Service. This local cross-schema transaction cannot span independent MySQL instances.
 
 ### Reservation instead of payment
 
@@ -138,15 +136,15 @@ Do not overclaim. The specifications describe a Redlock-style lock, per-user der
 
 **Interview phrasing.** "Kafka was selected for non-blocking domain side effects, not because four services inherently require a streaming platform."
 
-### Database write and Kafka publish are not atomic
+### Transactional outbox delivery to Kafka
 
-**Current implementation.** After ticket persistence, `purchase_service.go` starts a goroutine that publishes `ticket.purchased`. The database transaction and broker publication do not share an atomic commit.
+**Current implementation.** `purchase_service.go` persists the full event envelope in `ticket_db.outbox_events` in the same MySQL transaction as inventory decrement and ticket insertion. A background relay claims pending rows with a lease, publishes them to Kafka, and records delivery or a retry time.
 
-**Benefit.** The HTTP response stays fast, and waiting for a broker acknowledgement does not extend the critical path.
+**Benefit.** A committed booking always has a durable event intent. Kafka outages leave retryable backlog instead of silently losing the event.
 
-**Risk.** A process crash, cancellation, or publish failure after the ticket write can leave a real booking without its event and therefore without an email. Kafka `acks=all` and producer retries help only after a publish is actually attempted; they do not solve the dual-write gap.
+**Risk.** Delivery is at least once. If the relay crashes after Kafka accepts a message but before MySQL marks it published, it can publish the same stable event ID again. Consumers need durable idempotency. The relay also requires monitoring for backlog age and retry counts.
 
-**Next design.** Write an outbox row in the same transaction as the ticket/reservation state. A relay publishes that row with retry and marks it delivered, or use change-data capture. This converts the failure mode from silent loss into a recoverable, observable backlog.
+**Next design.** Add operational metrics/alerts for pending row count, oldest age, and attempts; enforce durable consumer deduplication by event ID. CDC is an alternative when the event volume or relay operational needs justify it.
 
 ### At-least-once consumption and idempotency
 

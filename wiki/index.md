@@ -8,10 +8,10 @@ Catalog of all pages in this wiki. Organized by category. Used by the LLM to loc
 |------|---------|
 | [[user-service]] | Identity, authentication, session management, PII encryption for user accounts |
 | [[event-service]] | Public event catalog — browse upcoming events with pagination |
-| [[ticket-service]] | Purchase flow with Redis-based distributed locking, atomic inventory decrement |
+| [[ticket-service]] | Five-master Redlock and fencing; one MySQL transaction for inventory, ticket, and outbox, with at-least-once Kafka relay |
 | [[email-service]] | Async confirmation delivery via Kafka consumer with idempotency and retry |
 | [[kafka]] | Async event backbone — `user.created` and `ticket.purchased` topics |
-| [[redis]] | Session store and distributed lock manager |
+| [[redis]] | Session store and five-master Redlock lease layer |
 | [[mysql]] | Primary data store — 4 databases (user_db, event_db, ticket_db, email_db) |
 
 ## Concepts
@@ -19,7 +19,7 @@ Catalog of all pages in this wiki. Organized by category. Used by the LLM to loc
 | Page | Summary |
 |------|---------|
 | [[pii-encryption]] | AES-256-GCM column-level application encryption for all PII fields |
-| [[distributed-locking]] | Redis SETNX per-event locks with Lua-script safe release, 30s TTL |
+| [[distributed-locking]] | Five-master Redlock lease plus monotonic MySQL fencing token, 30s TTL |
 | [[service-decoupling]] | Kafka-based async messaging for non-blocking side effects |
 | [[session-management]] | Redis-backed opaque session tokens with rolling TTL refresh |
 | [[email-retry-strategy]] | Exponential backoff retry (1m→5m→15m→1h→4h) with dead-letter audit trail |

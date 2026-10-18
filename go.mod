@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/confluentinc/confluent-kafka-go/v2 v2.15.0
+	github.com/go-redsync/redsync/v4 v4.17.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1

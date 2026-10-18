@@ -19,10 +19,42 @@ type mysqlTicketRepo struct {
 	db *sql.DB
 }
 
+// CreateWithTx inserts a ticket through the caller's booking transaction.
+func CreateWithTx(tx *sql.Tx, ticket *model.Ticket) error {
+	var err error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		ticket.BookingRef, err = generateBookingRef()
+		if err != nil {
+			return fmt.Errorf("generate booking ref: %w", err)
+		}
+		ticket.CreatedAt = time.Now().UTC()
+
+		result, execErr := tx.Exec(
+			"INSERT INTO ticket_db.tickets (booking_ref, user_id, event_id, quantity, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+			ticket.BookingRef, ticket.UserID, ticket.EventID, ticket.Quantity, ticket.Status, ticket.CreatedAt,
+		)
+		if execErr != nil {
+			if isDuplicateKey(execErr) {
+				continue
+			}
+			return fmt.Errorf("create ticket: %w", execErr)
+		}
+		id, err := result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("get last insert id: %w", err)
+		}
+		ticket.ID = uint64(id)
+		return nil
+	}
+	return fmt.Errorf("create ticket: failed after %d retries", maxRetries)
+}
+
+// NewMySQLTicketRepo creates a ticket repository backed by MySQL.
 func NewMySQLTicketRepo(db *sql.DB) TicketRepository {
 	return &mysqlTicketRepo{db: db}
 }
 
+// Create inserts a ticket using the repository's own database connection.
 func (r *mysqlTicketRepo) Create(ticket *model.Ticket) error {
 	var err error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -52,6 +84,7 @@ func (r *mysqlTicketRepo) Create(ticket *model.Ticket) error {
 	return fmt.Errorf("create ticket: failed after %d retries", maxRetries)
 }
 
+// FindByUserID returns one page of tickets and the user's total ticket count.
 func (r *mysqlTicketRepo) FindByUserID(userID uint64, page, perPage int) ([]*model.Ticket, int, error) {
 	if page < 1 {
 		page = 1
@@ -89,6 +122,7 @@ func (r *mysqlTicketRepo) FindByUserID(userID uint64, page, perPage int) ([]*mod
 	return tickets, total, rows.Err()
 }
 
+// FindByBookingRef looks up a ticket by its unique booking reference.
 func (r *mysqlTicketRepo) FindByBookingRef(ref string) (*model.Ticket, error) {
 	t := &model.Ticket{}
 	err := r.db.QueryRow(
@@ -104,6 +138,7 @@ func (r *mysqlTicketRepo) FindByBookingRef(ref string) (*model.Ticket, error) {
 	return t, nil
 }
 
+// generateBookingRef creates a random booking reference in the TBK-XXXXXXXX format.
 func generateBookingRef() (string, error) {
 	buf := make([]byte, 8)
 	for i := range buf {
@@ -116,14 +151,17 @@ func generateBookingRef() (string, error) {
 	return "TBK-" + string(buf), nil
 }
 
+// isDuplicateKey reports whether a MySQL error indicates a uniqueness conflict.
 func isDuplicateKey(err error) bool {
 	return err != nil && (contains(err.Error(), "Duplicate entry") || contains(err.Error(), "duplicate key"))
 }
 
+// contains reports whether s includes substr.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }
 
+// searchString returns whether substr occurs anywhere inside s.
 func searchString(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

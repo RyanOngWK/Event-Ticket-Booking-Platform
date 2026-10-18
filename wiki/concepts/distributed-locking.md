@@ -2,71 +2,37 @@
 title: "Distributed Locking"
 category: "concept"
 tags: [concurrency, locking, redis, race-condition, inventory]
-source_count: 7
-updated: 2025-07-16
+source_count: 8
+updated: 2026-10-18
 ---
 
 # Distributed Locking
 
 ## Overview
 
-The ticket purchase flow must serialize concurrent requests to prevent double-selling — the classic "overselling" problem. The solution is a Redis-based distributed lock scoped per event. This is a MUST principle under the [[constitution]] (Principle II: Concurrency Management).
+Ticket Service uses a per-event Redlock lease for contention control and a MySQL fencing token to reject old writes after a newer token has been accepted. The database remains the authority for inventory.
 
 ## Rationale
 
-**Why Redis-based distributed lock over PostgreSQL advisory locks:**
+Redlock coordinates access across five Redis masters. A majority can still be available when one master is unavailable. The Compose nodes share a host, so this demonstrates quorum behavior but not independent production failure domains.
 
-- PostgreSQL advisory locks tie the lock lifecycle to a database connection. In a microservice architecture, the lock holder may be a different process from the DB connection owner — the lock becomes unreliable.
-- Redis is connection-agnostic — the lock is independent of any database connection.
-- Redis is already in the stack for [[session-management]] — no new infrastructure.
-- Purpose-built for distributed mutual exclusion.
-
-**Why lock-per-event, not lock-per-ticket:**
-
-- Locking at the event granularity is sufficient for ticket inventory management.
-- Per-ticket locking would require managing thousands of locks per event — complexity without benefit.
-- If extreme contention on a single event becomes a bottleneck, sharded locks can be introduced later.
+Redlock provides a time-limited lease, not a fencing token. Ticket Service therefore allocates a monotonic token from MySQL before trying to acquire the lock. Requests that fail to acquire the lock can consume token values; gaps are harmless. Allocating before lock acquisition prevents a delayed request from resuming later and minting a higher token.
 
 ## Implementation
 
 ### Lock Acquisition
 
-```
-SET lock:event:{event_id} {instance_id} NX EX 30
-```
+The service uses the Redsync Go library over five Redis masters. It makes one acquisition attempt per request with a 30-second expiry. Each lock has a unique owner value, and release targets only that value.
 
-- `NX` — "set if Not eXists" → atomic lock acquisition. Only one instance succeeds.
-- `EX 30` — 30-second TTL. If the lock holder crashes, the lock auto-expires (no deadlock).
-- `instance_id` — unique per service instance, used to verify ownership on release.
+### Fencing Token
 
-### Lock Release (Safe)
+event_db.event_fencing_tokens stores last_issued_token and last_accepted_token per event. The Ticket Service increments the issued counter on a pinned MySQL connection before attempting Redlock. The conditional inventory update carries the token and updates inventory and last_accepted_token in the same SQL statement, only when the token exceeds the last accepted value.
 
-Lua script executed atomically on Redis:
+Once MySQL has accepted a newer token, a delayed request with an older token affects zero rows and is rejected. This is the fencing boundary: the database remembers the newest token it has observed.
 
-```lua
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-    return redis.call("DEL", KEYS[1])
-else
-    return 0
-end
-```
+### Remaining Limits
 
-This prevents an instance from releasing another instance's lock (e.g., if the original lock expired and a new lock was acquired).
-
-### Retry Strategy
-
-If lock acquisition fails (NX returns nil), the client retries with exponential backoff:
-- 3 attempts: 50ms → 100ms → 200ms
-- After 3 failures → HTTP 423 Locked, client should retry with its own backoff
-
-### Dual Safety
-
-Even if the distributed lock somehow fails, the SQL UPDATE provides a second layer of protection:
-```sql
-UPDATE events SET remaining_count = remaining_count - ? 
-WHERE id = ? AND remaining_count >= ?
-```
-If `remaining_count` has already dropped below the requested quantity, zero rows are affected and the purchase is rejected.
+Fencing does not make inventory decrement and ticket insertion atomic. A ticket insert can still fail after inventory changes. The next stage should put inventory, ticket, and an outbox row in one database transaction. Kafka delivery then happens asynchronously from the outbox.
 
 ## Constitution Constraints
 

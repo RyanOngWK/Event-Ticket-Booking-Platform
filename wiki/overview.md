@@ -2,8 +2,8 @@
 title: "System Overview"
 category: "entity"
 tags: [overview, architecture, synthesis]
-source_count: 8
-updated: 2025-07-17
+source_count: 9
+updated: 2026-10-18
 ---
 
 # System Overview
@@ -18,7 +18,7 @@ Four services, each owning a single bounded context:
 |---------|------|----------------|
 | [[user-service]] | :8081 | Identity, authentication, PII management |
 | [[event-service]] | :8082 | Public catalog of upcoming events (read-only for visitors) |
-| [[ticket-service]] | :8083 | Purchase flow with distributed locking |
+| [[ticket-service]] | :8083 | Redlock/fencing purchase flow with transactional outbox relay |
 | [[email-service]] | :8084 | Async Kafka consumer for confirmation delivery |
 
 Infrastructure: [[mysql]] (4 databases), [[redis]] (sessions + locks), [[kafka]] (2 topics).
@@ -38,18 +38,20 @@ sequenceDiagram
     Ticket->>Redis: GET session:{token}
     Redis-->>Ticket: user context
 
-    Ticket->>Redis: SET lock:event:{id} NX EX 30
+    Ticket->>MySQL: allocate monotonic fencing token
+    Ticket->>Redis: acquire 5-master Redlock lease (30s)
     alt lock failed
         Ticket-->>Client: 423 Locked
     end
 
-    Ticket->>MySQL: UPDATE events SET remaining_count = remaining_count - qty<br/>WHERE id = ? AND remaining_count >= ?
+    Ticket->>MySQL: conditional inventory decrement + accept fencing token
     alt zero rows
         Ticket->>Redis: RELEASE lock
         Ticket-->>Client: 409 Sold out
     else success
         Ticket->>MySQL: INSERT INTO tickets (...)
-        Ticket--)Kafka: PUBLISH ticket.purchased
+        Ticket->>MySQL: commit inventory + ticket + outbox
+        Relay->>Kafka: publish outbox event and retry on failure
         Ticket->>Redis: RELEASE lock
         Ticket-->>Client: 201 Created
 
@@ -73,7 +75,7 @@ Violating any principle = PR rejected.
 ## Key Architectural Decisions
 
 - [[pii-encryption]] — Application-level AES-256-GCM over MySQL TDE (column-level control, DB-agnostic)
-- [[distributed-locking]] — Redis Redlock over PostgreSQL advisory locks (connection-agnostic)
+- [[distributed-locking]] — five-master Redlock lease for contention plus MySQL fencing at the write boundary
 - [[service-decoupling]] — Kafka over direct HTTP between services (decouples availability)
 - [[session-management]] — Redis-backed opaque tokens over JWTs (instant revocation without blocklist)
 

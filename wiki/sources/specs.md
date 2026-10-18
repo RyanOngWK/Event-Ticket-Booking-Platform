@@ -2,8 +2,8 @@
 title: "Source Map: Specs"
 category: "source-map"
 tags: [sources, spec, requirements, research]
-source_count: 3
-updated: 2025-07-16
+source_count: 4
+updated: 2026-10-18
 ---
 
 # Source Map: Specification Documents
@@ -20,7 +20,7 @@ The specification documents in `specs/001-event-ticket-booking/` form the design
 | `plan.md` | Tech stack decisions, service decomposition, file layout | [[overview]], all entity pages |
 | `tasks.md` | 89 granular tasks across 7 phases, each with file paths and dependencies | [[sources/code-structure]] |
 | `research.md` | 8 technical decisions with rationale and rejected alternatives | [[pii-encryption]], [[distributed-locking]], [[service-decoupling]], [[session-management]], [[email-retry-strategy]], [[mysql]], [[kafka]] |
-| `data-model.md` | Entity schemas, indexes, constraints, state transitions | [[user-service]], [[event-service]], [[ticket-service]], [[email-service]], [[mysql]] |
+| `data-model.md` | Entity schemas, indexes, constraints, fencing-token counters, and state transitions | [[user-service]], [[event-service]], [[ticket-service]], [[email-service]], [[mysql]] |
 | `contracts/` | REST API specs and Kafka topic schemas | All entity pages (API tables), [[kafka]] |
 | `quickstart.md` | Runnable validation scenarios | [[testing-strategy]] e2e test |
 | `checklists/` | Spec quality validation checklist | [[testing-strategy]] |

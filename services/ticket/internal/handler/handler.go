@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -17,10 +18,12 @@ type TicketHandler struct {
 	eventDB *sql.DB
 }
 
+// NewTicketHandler builds the HTTP handlers with the purchase service and event database.
 func NewTicketHandler(svc *service.PurchaseService, eventDB *sql.DB) *TicketHandler {
 	return &TicketHandler{svc: svc, eventDB: eventDB}
 }
 
+// Purchase validates and handles one authenticated ticket purchase request.
 func (h *TicketHandler) Purchase(w http.ResponseWriter, r *http.Request) {
 	userIDStr := middleware.GetUserID(r.Context())
 	if userIDStr == "" {
@@ -48,6 +51,7 @@ func (h *TicketHandler) Purchase(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// PurchaseHistory returns the authenticated user's paginated ticket history.
 func (h *TicketHandler) PurchaseHistory(w http.ResponseWriter, r *http.Request) {
 	userIDStr := middleware.GetUserID(r.Context())
 	if userIDStr == "" {
@@ -121,6 +125,7 @@ func (h *TicketHandler) PurchaseHistory(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// handlePurchaseError maps purchase failures to their corresponding HTTP responses.
 func handlePurchaseError(w http.ResponseWriter, err error) {
 	switch {
 	case err == service.ErrLockNotAcquired:
@@ -129,7 +134,9 @@ func handlePurchaseError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	case err == service.ErrInvalidQuantity:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		default:
+	case errors.Is(err, service.ErrStaleFencingToken):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	default:
 		errMsg := err.Error()
 		if len(errMsg) > 8 && errMsg[:8] == "insufficient" {
 			if len(errMsg) >= 32 && errMsg[len(errMsg)-12:] == "0 remaining" {
@@ -143,12 +150,14 @@ func handlePurchaseError(w http.ResponseWriter, err error) {
 	}
 }
 
+// writeJSON serializes a response body and writes it with the supplied status code.
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
 
+// Health responds to the service health check endpoint.
 func Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
@@ -13,15 +16,23 @@ import (
 	"github.com/example/ticket-platform/services/shared/pkg/middleware"
 	"github.com/example/ticket-platform/services/ticket/internal/handler"
 	"github.com/example/ticket-platform/services/ticket/internal/lock"
+	"github.com/example/ticket-platform/services/ticket/internal/outbox"
 	"github.com/example/ticket-platform/services/ticket/internal/publisher"
 	"github.com/example/ticket-platform/services/ticket/internal/repository"
 	"github.com/example/ticket-platform/services/ticket/internal/service"
 )
 
+// main wires Ticket Service dependencies, starts the outbox relay, and serves HTTP.
 func main() {
 	dbDSN := getEnv("DB_DSN", "root:rootpassword@tcp(localhost:3306)/ticket_db?parseTime=true")
 	eventDBDSN := getEnv("EVENT_DB_DSN", "root:rootpassword@tcp(localhost:3306)/event_db?parseTime=true")
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	redlockAddrs := make([]string, 0, 5)
+	for _, addr := range strings.Split(getEnv("REDLOCK_ADDRS", "localhost:6379"), ",") {
+		if addr = strings.TrimSpace(addr); addr != "" {
+			redlockAddrs = append(redlockAddrs, addr)
+		}
+	}
 	kafkaBrokers := getEnv("KAFKA_BROKERS", "localhost:9092")
 	port := getEnv("SERVICE_PORT", "8083")
 
@@ -46,7 +57,8 @@ func main() {
 		log.Fatalf("Failed to ping event MySQL: %v", err)
 	}
 
-	redisLock := lock.NewRedisLock(redisAddr)
+	redisLock := lock.NewRedisLock(redlockAddrs...)
+	defer redisLock.Close()
 
 	pub, err := publisher.NewTicketEventPublisher(kafkaBrokers)
 	if err != nil {
@@ -55,7 +67,8 @@ func main() {
 	defer pub.Close()
 
 	ticketRepo := repository.NewMySQLTicketRepo(db)
-	svc := service.NewPurchaseService(ticketRepo, eventDB, redisLock, pub)
+	svc := service.NewPurchaseService(ticketRepo, eventDB, redisLock)
+	go outbox.NewRelay(eventDB, pub, time.Second).Run(context.Background())
 
 	ticketHandler := handler.NewTicketHandler(svc, eventDB)
 
@@ -79,6 +92,7 @@ func main() {
 	}
 }
 
+// getEnv returns an environment variable or its default when unset.
 func getEnv(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
