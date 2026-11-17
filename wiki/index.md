@@ -8,10 +8,10 @@ Catalog of all pages in this wiki. Organized by category. Used by the LLM to loc
 |------|---------|
 | [[user-service]] | Identity, authentication, session management, PII encryption for user accounts |
 | [[event-service]] | Public event catalog — browse upcoming events with pagination |
-| [[ticket-service]] | Five-master Redlock and fencing; one MySQL transaction for inventory, ticket, and outbox, with at-least-once Kafka relay |
+| [[ticket-service]] | Timed reservation lifecycle with Stripe test checkout, verified webhook settlement, and outbox |
 | [[email-service]] | Async confirmation delivery via Kafka consumer with idempotency and retry |
 | [[kafka]] | Async event backbone — `user.created` and `ticket.purchased` topics |
-| [[redis]] | Session store and five-master Redlock lease layer |
+| [[redis]] | Session store for authentication; not used for ticket inventory coordination |
 | [[mysql]] | Primary data store — 4 databases (user_db, event_db, ticket_db, email_db) |
 
 ## Concepts
@@ -19,16 +19,17 @@ Catalog of all pages in this wiki. Organized by category. Used by the LLM to loc
 | Page | Summary |
 |------|---------|
 | [[pii-encryption]] | AES-256-GCM column-level application encryption for all PII fields |
-| [[distributed-locking]] | Five-master Redlock lease plus monotonic MySQL fencing token, 30s TTL |
+| [[reservation-unit-pool]] | Per-unit MySQL inventory holds, on-demand expiry reclaim, and payment settlement with `FOR UPDATE SKIP LOCKED` |
 | [[service-decoupling]] | Kafka-based async messaging for non-blocking side effects |
 | [[session-management]] | Redis-backed opaque session tokens with rolling TTL refresh |
 | [[email-retry-strategy]] | Exponential backoff retry (1m→5m→15m→1h→4h) with dead-letter audit trail |
-| [[testing-strategy]] | 112 tests across 3 levels: unit, integration, e2e. Zero Docker dependency at test time. |
+| [[testing-strategy]] | Unit, integration, and end-to-end checks plus a manual 10,000-client reservation burst using real MySQL |
 | [[kafka-producer]] | Code walkthrough of the sending side — shared Producer, publishers, envelope format |
 | [[kafka-consumer]] | Code walkthrough of the reading side — Consume loop, offset commits, email handler |
 | [[constitution]] | 4 governing principles (Security-First, Concurrency, Decoupling, TDD) |
 | [[ci-cd-pipeline]] | GitHub Actions CI: build, test, Docker build+push to GHCR |
 | [[trade-offs]] | Resume-ready architecture decision record: v1 benefits, costs, code gaps, and production evolution |
+| [[interview-tradeoffs]] | Interview guide to the flash-sale design decisions, assumptions, alternatives, limits, and scale-up paths |
 
 ## Source Maps
 

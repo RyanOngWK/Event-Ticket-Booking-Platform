@@ -25,6 +25,14 @@ func main() {
 		log.Fatalf("failed to ping database: %v", err)
 	}
 
+	_, err = db.Exec("DELETE FROM ticket_db.reservations")
+	if err != nil {
+		log.Fatalf("failed to clear reservations: %v", err)
+	}
+	_, err = db.Exec("DELETE FROM reservation_units")
+	if err != nil {
+		log.Fatalf("failed to clear reservation units: %v", err)
+	}
 	_, err = db.Exec("DELETE FROM events")
 	if err != nil {
 		log.Fatalf("failed to clear events: %v", err)
@@ -44,13 +52,32 @@ func main() {
 		{"Food Festival", "International food tasting and culinary workshops", "Riverside Park", now.Add(21 * 24 * time.Hour), 2000, 1500},
 	}
 
+	unitInsert, err := db.Prepare("INSERT INTO reservation_units (event_id, unit_number, status) VALUES (?, ?, ?)")
+	if err != nil {
+		log.Fatalf("failed to prepare reservation-unit insert: %v", err)
+	}
+	defer unitInsert.Close()
+
 	for _, e := range events {
-		_, err := db.Exec(
-			"INSERT INTO events (name, description, date, venue, total_capacity, remaining_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			e.name, e.description, e.date, e.venue, e.totalCapacity, e.remaining, now, now,
+		result, err := db.Exec(
+			"INSERT INTO events (name, description, date, venue, total_capacity, remaining_count, price_cents, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'usd', ?, ?)",
+			e.name, e.description, e.date, e.venue, e.totalCapacity, e.remaining, 2500, now, now,
 		)
 		if err != nil {
 			log.Fatalf("failed to insert event %q: %v", e.name, err)
+		}
+		eventID, err := result.LastInsertId()
+		if err != nil {
+			log.Fatalf("failed to read ID for event %q: %v", e.name, err)
+		}
+		for unitNumber := uint64(1); unitNumber <= e.totalCapacity; unitNumber++ {
+			status := "sold"
+			if unitNumber <= e.remaining {
+				status = "available"
+			}
+			if _, err := unitInsert.Exec(eventID, unitNumber, status); err != nil {
+				log.Fatalf("failed to seed unit %d for event %q: %v", unitNumber, e.name, err)
+			}
 		}
 	}
 

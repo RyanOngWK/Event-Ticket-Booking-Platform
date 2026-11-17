@@ -25,7 +25,7 @@ flowchart LR
         end
         subgraph concepts["concepts/"]
             c1["pii-encryption.md"]
-            c2["distributed-locking.md"]
+            c2["reservation-unit-pool.md"]
             c3["service-decoupling.md"]
             c4["session-management.md"]
             c5["email-retry-strategy.md"]

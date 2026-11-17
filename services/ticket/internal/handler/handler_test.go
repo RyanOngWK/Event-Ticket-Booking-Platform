@@ -16,10 +16,10 @@ import (
 )
 
 type testPurchaseService struct {
-	tickets []*model.Ticket
+	tickets      []*model.Ticket
 	purchaseResp *model.PurchaseResponse
 	purchaseErr  error
-	total       int
+	total        int
 }
 
 func (s *testPurchaseService) Purchase(ctx interface{}, userID, eventID uint64, quantity int) (*model.PurchaseResponse, error) {
@@ -133,11 +133,11 @@ func TestPurchaseUnauthorized(t *testing.T) {
 	}
 }
 
-func TestHandlePurchaseErrorLockNotAcquired(t *testing.T) {
+func TestHandlePurchaseErrorInsufficientInventory(t *testing.T) {
 	rec := httptest.NewRecorder()
-	handlePurchaseError(rec, service.ErrLockNotAcquired)
-	if rec.Code != http.StatusLocked {
-		t.Errorf("expected 423, got %d", rec.Code)
+	handlePurchaseError(rec, service.ErrInsufficientInventory)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d", rec.Code)
 	}
 }
 

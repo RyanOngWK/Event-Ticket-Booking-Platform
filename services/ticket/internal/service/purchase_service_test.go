@@ -7,9 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-
-	"github.com/example/ticket-platform/services/ticket/internal/lock"
 	"github.com/example/ticket-platform/services/ticket/internal/model"
 )
 
@@ -91,8 +88,6 @@ func openTestEventDB(t *testing.T) *sql.DB {
 func setupPurchaseService(t *testing.T) *PurchaseService {
 	t.Helper()
 	repo := &testTicketRepo{tickets: make(map[string]*model.Ticket), nextID: 1}
-	s := miniredis.RunT(t)
-	rl := lock.NewRedisLock(s.Addr())
 	eventDB := openTestEventDB(t)
 	if eventDB == nil {
 		t.Fatal("eventDB is nil")
@@ -100,18 +95,17 @@ func setupPurchaseService(t *testing.T) *PurchaseService {
 	return &PurchaseService{
 		ticketRepo: repo,
 		eventDB:    eventDB,
-		redisLock:  rl,
 	}
 }
 
 func TestPurchaseInvalidQuantity(t *testing.T) {
 	svc := setupPurchaseService(t)
-	_, err := svc.Purchase(context.Background(), 1, 1, 0)
+	_, err := svc.CreateReservation(context.Background(), 1, 1, 0)
 	if err != ErrInvalidQuantity {
 		t.Errorf("expected ErrInvalidQuantity, got %v", err)
 	}
 
-	_, err = svc.Purchase(context.Background(), 1, 1, -1)
+	_, err = svc.CreateReservation(context.Background(), 1, 1, -1)
 	if err != ErrInvalidQuantity {
 		t.Errorf("expected ErrInvalidQuantity, got %v", err)
 	}
@@ -119,7 +113,7 @@ func TestPurchaseInvalidQuantity(t *testing.T) {
 
 func TestPurchaseEventNotFound(t *testing.T) {
 	svc := setupPurchaseService(t)
-	_, err := svc.Purchase(context.Background(), 1, 99999, 1)
+	_, err := svc.CreateReservation(context.Background(), 1, 99999, 1)
 	if err == nil {
 		t.Error("expected error for non-existent event")
 	}
@@ -147,7 +141,7 @@ func TestEventRowScan(t *testing.T) {
 	defer db.Close()
 
 	var e eventRow
-	err := db.QueryRow("SELECT id, name, date, venue, remaining_count FROM events LIMIT 1").Scan(&e.ID, &e.Name, &e.Date, &e.Venue, &e.RemainingCount)
+	err := db.QueryRow("SELECT id, name, date, venue FROM events LIMIT 1").Scan(&e.ID, &e.Name, &e.Date, &e.Venue)
 	if err != nil {
 		t.Skipf("no events in event_db, skipping scan test: %v", err)
 	}

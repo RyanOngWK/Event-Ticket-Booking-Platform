@@ -1,9 +1,9 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 0.0.0 (template/placeholder) → 1.0.0
-Bump rationale: MAJOR — first substantive constitution filling all placeholder tokens
-  with governing principles, technical constraints, workflow gates, and governance rules.
+Version change: 1.0.0 → 1.1.0
+Bump rationale: MINOR — replace distributed-lock coordination with database-backed
+  reservation-unit allocation, following the flash-sale design source.
 
 Modified principles:
   [PRINCIPLE_1_NAME] → I. Security-First
@@ -45,12 +45,11 @@ error messages, or analytics pipelines.
 
 ### II. Concurrency Management
 
-Strict distributed locking MUST be implemented to prevent race conditions during ticket
-purchasing operations. The system MUST use a distributed lock manager (e.g., Redis Redlock,
-PostgreSQL advisory locks, or equivalent) to ensure that only one transaction can modify a
-ticket's availability state at any given time. All ticket purchase workflows MUST acquire and
-release locks within bounded time limits to prevent deadlocks. Lock TTL MUST be configured
-with a maximum of 30 seconds for ticket operations.
+Ticket availability MUST be represented by individually claimable reservation-unit rows.
+Concurrent purchase workflows MUST claim distinct available rows using database row locking
+(for example, `SELECT ... FOR UPDATE SKIP LOCKED`) and commit the unit allocation, ticket, and
+outbox event in one transaction. A single shared counter or Redis lock MUST NOT be the authority
+for ticket availability. Redis MAY continue to serve unrelated needs such as session storage.
 
 ### III. Service Decoupling
 
@@ -77,8 +76,8 @@ for core business logic: 80%.
 - **Message Broker**: Apache Kafka is the required message broker for asynchronous
   inter-service communication. Topics MUST follow the naming convention
   `<domain>.<event>` (e.g., `ticket.purchased`, `email.send`).
-- **Distributed Locking**: Redis Redlock or PostgreSQL advisory locks are the approved
-  distributed locking mechanisms.
+- **Inventory Concurrency**: MySQL/InnoDB reservation-unit rows and transactional row locking
+  are the approved ticket-allocation mechanism. The database is the single source of truth.
 - **Containerization**: All services MUST be containerized (Docker). Orchestration via
   Kubernetes or Docker Compose for local development.
 
@@ -112,4 +111,4 @@ be justified in the implementation plan and approved before development begins.
 All PRs and code reviews MUST verify compliance with the principles defined in this document.
 Use the plan-template Constitution Check as a pre-implementation gate.
 
-**Version**: 1.0.0 | **Ratified**: 2025-07-14 | **Last Amended**: 2025-07-14
+**Version**: 1.1.0 | **Ratified**: 2025-07-14 | **Last Amended**: 2026-11-16

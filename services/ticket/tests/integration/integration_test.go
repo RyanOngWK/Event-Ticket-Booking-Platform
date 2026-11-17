@@ -4,19 +4,16 @@
 package integration
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/example/ticket-platform/services/shared/pkg/middleware"
-	"github.com/example/ticket-platform/services/ticket/internal/lock"
 )
 
 func TestHealthIntegration(t *testing.T) {
@@ -33,52 +30,6 @@ func TestHealthIntegration(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("health endpoint: expected 200, got %d", rec.Code)
-	}
-}
-
-func TestLockAcquireRelease(t *testing.T) {
-	s := miniredis.RunT(t)
-	rl := lock.NewRedisLock(s.Addr())
-
-	ctx := context.Background()
-	ok, err := rl.Acquire(ctx, "lock:test:integration", 10*time.Second)
-	if err != nil {
-		t.Fatalf("acquire failed: %v", err)
-	}
-	if !ok {
-		t.Fatal("lock should be acquired")
-	}
-
-	err = rl.Release(ctx, "lock:test:integration")
-	if err != nil {
-		t.Fatalf("release failed: %v", err)
-	}
-
-	ok2, _ := rl.Acquire(ctx, "lock:test:integration", 10*time.Second)
-	if !ok2 {
-		t.Error("lock should be re-acquirable after release")
-	}
-}
-
-func TestLockContention(t *testing.T) {
-	s := miniredis.RunT(t)
-	rl := lock.NewRedisLock(s.Addr())
-	ctx := context.Background()
-
-	ok1, _ := rl.Acquire(ctx, "lock:test:contention", 10*time.Second)
-	if !ok1 {
-		t.Fatal("first acquire should succeed")
-	}
-
-	ok2, _ := rl.Acquire(ctx, "lock:test:contention", 10*time.Second)
-	if ok2 {
-		t.Fatal("second acquire should fail while lock is held")
-	}
-
-	rl.Release(ctx, "lock:test:contention")
-	ok3, _ := rl.Acquire(ctx, "lock:test:contention", 10*time.Second)
-	if !ok3 {
-		t.Fatal("should acquire after release")
 	}
 }
 

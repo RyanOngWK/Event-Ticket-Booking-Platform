@@ -1,5 +1,53 @@
 # Wiki Log
 
+## [2026-11-16] simulation | 10,000-Client Reservation Burst
+
+**Prompt:** Simulate 10,000 fake concurrent users against the real reservation path.
+
+**Implementation:**
+- Added `services/ticket/cmd/loadsim` and `make simulate-reservations`.
+- The runner uses the production reservation handler/service, Redis auth middleware, real MySQL unit allocation, a temporary event, synthetic Redis sessions, and a fake payment gateway. Stripe is not called. Temporary data is removed after the run.
+- The burst released 10,000 requests together, with up to 1,000 HTTP connections and a 100-connection MySQL pool.
+
+**Result:**
+- 10,000 requests completed in 9.429 seconds (about 1,060.6 offered requests/second).
+- 500 returned `201`; 9,500 returned `409`; zero returned `5xx` or transport errors.
+- 500 pending reservations matched 500 reserved unit rows for a 500-unit event; no oversell occurred.
+- Request latency was p50 5.316s, p95 9.088s, and p99 9.352s. These include client-side waiting under the 1,000-connection cap.
+- Verified cleanup: no temporary load event remained and no `session:loadsim-*` Redis keys remained.
+
+**Pages updated:**
+- `concepts/testing-strategy.md`, `entities/ticket-service.md`, `index.md`, `sources/code-structure.md`, and `sources/config-files.md`.
+
+## [2026-11-16] update | Stripe Test-Mode Checkout Simulation
+
+**Prompt:** Implement an end-to-end simulation of external payment confirmation and webhook settlement.
+
+**Pages updated:**
+- `entities/ticket-service.md` and `concepts/reservation-unit-pool.md` - document timed reservations, Stripe PaymentIntent setup, signed webhook settlement, on-demand expiration reclaim, and late-success refunds.
+- `entities/mysql.md` and `overview.md` - map the reservation table and the updated payment sequence.
+- `concepts/trade-offs.md` - replace the stale no-payment scope statement with test-mode simulation and production gaps.
+- `index.md`, `sources/config-files.md`, and `sources/code-structure.md` - refresh summaries and source mappings.
+
+**Key insights:**
+- External payment happens after a short reservation commit, keeping Stripe latency outside inventory row locks.
+- The verified success webhook commits sold units, ticket, reservation status, and outbox event atomically on the shared MySQL instance.
+- Expiry reclamation runs on demand; a successful payment arriving after expiry triggers an idempotent test-mode refund.
+
+## [2026-11-16] update | Flash Sale Reservation-Unit Pool
+
+**Prompt:** Use the attached flash-sale design as the source of truth and replace Redis purchase concurrency checks with a per-product reservation-unit pool.
+
+**Pages created/updated:**
+- Created `concepts/reservation-unit-pool.md` with the source design, implementation mapping, and scope boundary for this synchronous purchase API.
+- Updated `entities/ticket-service.md`, `entities/event-service.md`, `entities/mysql.md`, `entities/redis.md`, `overview.md`, `concepts/constitution.md`, `concepts/trade-offs.md`, and `concepts/testing-strategy.md`.
+- Updated `index.md`, `SCHEMA.md`, `sources/config-files.md`, `sources/code-structure.md`, and `sources/specs.md`.
+
+**Key insights:**
+- One MySQL row represents one saleable unit. `FOR UPDATE SKIP LOCKED` lets concurrent purchase transactions claim different rows without a separate Redis inventory authority.
+- Temporary payment reservations, expiry reclamation, and a waiting room are described by the PDF but remain outside this project's immediate-confirmation purchase API.
+- Redis remains for session/authentication state.
+
 ## [2026-10-18] update | Transactional Booking and Kafka Outbox
 
 **Prompt:** Implement stage three: make inventory decrement, ticket creation, and Kafka event intent atomic.
@@ -143,3 +191,22 @@ Chronological record of all operations: ingests, queries, lint passes, and struc
 - Cross-service data access is direct MySQL reads for v1; tagged TODO(v2) to migrate to service APIs
 - Testing is a first-class concern: 112 test functions, zero Docker dependency at test time
 - Known technical debt: Ticket Service reads event_db directly; confluent-kafka-go requires glibc-based Docker image
+## [2026-11-16] query | Flash Sale Interview Trade-offs
+
+**Prompt:** Save the detailed discussion of interview tradeoffs for the flash-sale design and current implementation.
+
+**Pages created/updated:**
+- Created `concepts/interview-tradeoffs.md` with interview-ready explanations of inventory authority, reservation holds, Stripe settlement, expiry reclamation, waiting-room scope, outbox atomicity, data-model costs, failure cases, and load-test limits.
+- Updated `index.md` and `concepts/reservation-unit-pool.md` with links to the guide.
+
+**Key clarifications:**
+- Stripe latency does not hold MySQL row locks; the committed reservation holds inventory state for a bounded checkout period.
+- On-demand reclamation avoids relying on cron timing for purchase-path availability, while lazy cleanup and the 100-reservation batch limit remain tradeoffs.
+- The recorded 10,000-request local simulation is not evidence of Stripe or million-user production capacity.
+
+## [2026-11-16] update | Interview Guide Architecture Diagram
+
+**Prompt:** Add a high-level system architecture to the beginning of the interview tradeoffs Markdown guide.
+
+**Pages updated:**
+- `concepts/interview-tradeoffs.md` - added a Mermaid architecture diagram and the main purchase-flow steps, including Stripe webhook settlement, outbox publishing, Redis session scope, and on-demand expiry reclamation.

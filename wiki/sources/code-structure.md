@@ -2,8 +2,8 @@
 title: "Source Map: Code Structure"
 category: "source-map"
 tags: [sources, code, go, services, structure]
-source_count: 4
-updated: 2026-10-18
+source_count: 5
+updated: 2026-11-16
 ---
 
 # Source Map: Code Structure
@@ -25,13 +25,13 @@ flowchart LR
         end
         svc_user["user/<br/>identity · auth"]
         svc_event["event/<br/>public catalog"]
-        svc_ticket["ticket/<br/>purchase · locking · outbox relay"]
+        svc_ticket["ticket/<br/>reservations · Stripe test checkout · settlement · outbox"]
         svc_email["email/<br/>Kafka consumer"]
         svc_e2e["e2e/<br/>cross-service test"]
     end
     subgraph scripts["scripts/"]
         direction TB
-        sc_db["db/init.sql"]
+        sc_db["db/init.sql + migrations"]
         sc_kafka["kafka/init-topics.sh"]
         sc_seed["seed/seed_events.go"]
     end
@@ -43,7 +43,7 @@ flowchart LR
 |-----------|-----------|-----------|
 | `services/user/` | [[user-service]] | handler, service, repository, models |
 | `services/event/` | [[event-service]] | handler, service, repository, models |
-| `services/ticket/` | [[ticket-service]] | handler, transactional booking service, ticket repository, five-master Redlock, fencing, and outbox relay |
+| `services/ticket/` | [[ticket-service]] | checkout page, reservation and settlement service, Stripe gateway, ticket repository, outbox relay, and local reservation load simulator |
 | `services/email/` | [[email-service]] | consumer handler, email provider interface, status repository |
 | `services/shared/pkg/crypto/` | [[pii-encryption]] | encrypt, decrypt, hash functions |
 | `services/shared/pkg/kafka/` | [[kafka]], [[service-decoupling]], [[kafka-producer]], [[kafka-consumer]] | producer, consumer, event envelope types |
@@ -57,7 +57,7 @@ Tests are co-located with their source:
 |---------|-----------|-------------------|-----------|
 | User | `services/user/*_test.go` | `services/user/*_test.go` | [[user-service]], [[testing-strategy]] |
 | Event | `services/event/*_test.go` | `services/event/*_test.go` | [[event-service]], [[testing-strategy]] |
-| Ticket | `services/ticket/*_test.go` | `services/ticket/*_test.go` | [[ticket-service]], [[testing-strategy]], [[distributed-locking]] |
+| Ticket | `services/ticket/*_test.go` | `services/ticket/*_test.go` | [[ticket-service]], [[testing-strategy]], [[reservation-unit-pool]] |
 | Email | `services/email/*_test.go` | `services/email/*_test.go` | [[email-service]], [[testing-strategy]], [[email-retry-strategy]] |
 
 ## Ingest History

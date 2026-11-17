@@ -23,7 +23,9 @@ func (r *mysqlEventRepo) FindUpcoming(ctx context.Context, limit, offset int) ([
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, description, date, venue, total_capacity, remaining_count, created_at, updated_at FROM events WHERE date > NOW() ORDER BY date ASC LIMIT ? OFFSET ?",
+		"SELECT e.id, e.name, e.description, e.date, e.venue, e.total_capacity, "+
+			"(SELECT COUNT(*) FROM reservation_units u WHERE u.event_id = e.id AND u.status = 'available'), "+
+			"e.price_cents, e.currency, e.created_at, e.updated_at FROM events e WHERE e.date > NOW() ORDER BY e.date ASC LIMIT ? OFFSET ?",
 		limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -33,7 +35,7 @@ func (r *mysqlEventRepo) FindUpcoming(ctx context.Context, limit, offset int) ([
 	var events []model.Event
 	for rows.Next() {
 		var e model.Event
-		err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Date, &e.Venue, &e.TotalCapacity, &e.RemainingCount, &e.CreatedAt, &e.UpdatedAt)
+		err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Date, &e.Venue, &e.TotalCapacity, &e.RemainingCount, &e.PriceCents, &e.Currency, &e.CreatedAt, &e.UpdatedAt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -46,8 +48,10 @@ func (r *mysqlEventRepo) FindUpcoming(ctx context.Context, limit, offset int) ([
 func (r *mysqlEventRepo) FindByID(ctx context.Context, id uint64) (*model.Event, error) {
 	var e model.Event
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, name, description, date, venue, total_capacity, remaining_count, created_at, updated_at FROM events WHERE id = ?", id).
-		Scan(&e.ID, &e.Name, &e.Description, &e.Date, &e.Venue, &e.TotalCapacity, &e.RemainingCount, &e.CreatedAt, &e.UpdatedAt)
+		"SELECT e.id, e.name, e.description, e.date, e.venue, e.total_capacity, "+
+			"(SELECT COUNT(*) FROM reservation_units u WHERE u.event_id = e.id AND u.status = 'available'), "+
+			"e.price_cents, e.currency, e.created_at, e.updated_at FROM events e WHERE e.id = ?", id).
+		Scan(&e.ID, &e.Name, &e.Description, &e.Date, &e.Venue, &e.TotalCapacity, &e.RemainingCount, &e.PriceCents, &e.Currency, &e.CreatedAt, &e.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

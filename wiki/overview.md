@@ -2,111 +2,96 @@
 title: "System Overview"
 category: "entity"
 tags: [overview, architecture, synthesis]
-source_count: 9
-updated: 2026-10-18
+source_count: 11
+updated: 2026-11-16
 ---
 
 # System Overview
 
 ## The Big Picture
 
-This is a **distributed event ticket booking platform** — 4 independently deployable Go microservices that demonstrate production-grade concurrency control. The core problem: prevent double-selling tickets under high contention.
-
-Four services, each owning a single bounded context:
+This is a distributed event ticket booking platform with four independently deployable Go services. Ticket availability is kept in MySQL reservation-unit rows and allocated transactionally, without a Redis purchase lock or a hot per-event inventory counter.
 
 | Service | Port | Responsibility |
 |---------|------|----------------|
 | [[user-service]] | :8081 | Identity, authentication, PII management |
-| [[event-service]] | :8082 | Public catalog of upcoming events (read-only for visitors) |
-| [[ticket-service]] | :8083 | Redlock/fencing purchase flow with transactional outbox relay |
+| [[event-service]] | :8082 | Public catalog of upcoming events |
+| [[ticket-service]] | :8083 | Timed reservations, Stripe test checkout, paid-ticket settlement, and outbox relay |
 | [[email-service]] | :8084 | Async Kafka consumer for confirmation delivery |
 
-Infrastructure: [[mysql]] (4 databases), [[redis]] (sessions + locks), [[kafka]] (2 topics).
+Infrastructure: [[mysql]] (4 databases), [[redis]] (sessions), [[kafka]] (2 topics).
 
-## The Purchase Flow (Critical Path)
+## The Reservation and Payment Flow
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Ticket as Ticket Service
     participant Redis
+    participant Ticket as Ticket Service
     participant MySQL
+    participant Stripe
+    participant CLI as Stripe CLI
     participant Kafka
     participant Email as Email Service
 
-    Client->>Ticket: POST /api/v1/tickets/purchase
-    Ticket->>Redis: GET session:{token}
-    Redis-->>Ticket: user context
-
-    Ticket->>MySQL: allocate monotonic fencing token
-    Ticket->>Redis: acquire 5-master Redlock lease (30s)
-    alt lock failed
-        Ticket-->>Client: 423 Locked
-    end
-
-    Ticket->>MySQL: conditional inventory decrement + accept fencing token
-    alt zero rows
-        Ticket->>Redis: RELEASE lock
-        Ticket-->>Client: 409 Sold out
-    else success
-        Ticket->>MySQL: INSERT INTO tickets (...)
-        Ticket->>MySQL: commit inventory + ticket + outbox
-        Relay->>Kafka: publish outbox event and retry on failure
-        Ticket->>Redis: RELEASE lock
-        Ticket-->>Client: 201 Created
-
-        Kafka--)Email: consume
-        Email->>Email: check idempotency
-        Email->>MySQL: decrypt email from user_db
-        Email->>Email: send + retry with backoff
+    Client->>Ticket: POST /api/v1/tickets/reservations
+    Ticket->>Redis: auth middleware validates session
+    Redis-->>Ticket: authenticated user context
+    Ticket->>MySQL: BEGIN reservation transaction
+    Ticket->>MySQL: SELECT available units FOR UPDATE SKIP LOCKED
+    alt fewer than requested units
+        Ticket->>MySQL: reclaim expired units on demand and retry
+        Ticket->>MySQL: COMMIT reclamation or ROLLBACK
+        Ticket-->>Client: 409 Conflict
+    else enough units
+        Ticket->>MySQL: create reservation; mark units reserved
+        Ticket->>MySQL: COMMIT
+        Ticket->>Stripe: create test PaymentIntent outside transaction
+        Stripe-->>Client: client secret via Ticket Service
+        Client->>Stripe: confirm card payment
+        Stripe-->>CLI: signed webhook
+        CLI->>Ticket: forward event
+        Ticket->>MySQL: sell units; create ticket + outbox
+        Ticket->>MySQL: COMMIT settlement
+        Ticket->>Kafka: relay outbox event asynchronously
+        Kafka--)Email: consume ticket.purchased
     end
 ```
 
 ## Governing Principles
 
-All work is governed by the [[constitution]] — 4 MUST principles:
-1. **Security-First** — PII encrypted at rest (AES-256-GCM)
-2. **Concurrency Management** — Distributed locking for all purchases
-3. **Service Decoupling** — Async messaging for all side effects
-4. **Test-Driven Development** — 80% minimum coverage on business logic
+All work is governed by the [[constitution]]:
 
-Violating any principle = PR rejected.
+1. Security-First — PII encrypted at rest.
+2. Concurrency Management — claim inventory unit rows and commit the purchase atomically.
+3. Service Decoupling — async messaging for side effects.
+4. Test-Driven Development — unit and integration coverage for core logic.
 
 ## Key Architectural Decisions
 
-- [[pii-encryption]] — Application-level AES-256-GCM over MySQL TDE (column-level control, DB-agnostic)
-- [[distributed-locking]] — five-master Redlock lease for contention plus MySQL fencing at the write boundary
-- [[service-decoupling]] — Kafka over direct HTTP between services (decouples availability)
-- [[session-management]] — Redis-backed opaque tokens over JWTs (instant revocation without blocklist)
+- [[pii-encryption]] — application-level AES-256-GCM encryption
+- [[reservation-unit-pool]] — MySQL unit rows spread concurrent claims and are the inventory source of truth
+- [[service-decoupling]] — Kafka over direct HTTP for asynchronous side effects
+- [[session-management]] — Redis-backed opaque tokens for instant revocation
 
-## Known Limitations (v1)
+## Known Limitations
 
-- [[ticket-service]] reads `event_db` directly → tagged `TODO(v2)` for Event Service API
-- No payment processing — purchase = reservation only
-- Single-region deployment only
-- [[kafka]] dependency requires glibc-based Docker image (Debian, not Alpine)
-- Cross-service reads use shared MySQL; gRPC between services deferred
+- Ticket Service reads `event_db` directly → tagged `TODO(v2)` for Event Service API
+- Stripe test-mode simulation only; no live payment credentials are accepted
+- Expiry cleanup is on demand (when the pool is short or owner checks status), not a scheduled worker
+- Single-region deployment
+- [[kafka]] requires a glibc-based Docker image
+- Cross-schema transaction requires one shared MySQL server; separate servers need a saga/reservation flow
 
-See [[trade-offs]] for the full v1 scope decisions.
-
-## Testing
-
-[[testing-strategy]]: 112 test functions (87 unit + 24 integration + 1 e2e). Zero Docker dependency. Full suite completes in <15 seconds.
-
-## Development Pipeline
-
-The project was built using a spec-driven AI pipeline: Constitution → Spec → Plan → Tasks → Implement → Converge. Every line of code traces back to a requirement.
-
-## CI/CD
-
-[[ci-cd-pipeline]]: GitHub Actions runs on every push and PR — build/vet, unit, integration, e2e tests. On main push, all 4 service images are built and pushed to `ghcr.io/ryanongwk/event-ticket-booking-platform`. `docker-compose.yml` pulls pre-built images or builds locally.
+See [[trade-offs]] for the full scope decisions.
 
 ## Cross-references
 
 - [[constitution]] — governing principles
-- [[trade-offs]] — conscious v1 decisions and deferred scope
-- [[testing-strategy]] — test pyramid and practices
-- [[ci-cd-pipeline]] — GitHub Actions workflow, Docker image build+push
-- [[sources/specs]] — traceability from wiki to raw specification documents
-- [[sources/config-files]] — infrastructure and build configuration
-- [[sources/code-structure]] — source code layout
+- [[reservation-unit-pool]] — inventory allocation design
+- [[trade-offs]] — conscious scope decisions
+- [[testing-strategy]] — test practices
+- [[ci-cd-pipeline]] — CI and Docker image publishing
+- [[sources/specs]] — specification traceability
+- [[sources/config-files]] — infrastructure configuration
+- [[sources/code-structure]] — source layout

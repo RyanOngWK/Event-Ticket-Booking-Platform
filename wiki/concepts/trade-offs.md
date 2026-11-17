@@ -2,8 +2,8 @@
 title: "Architecture Trade-offs: Resume Deep Dive"
 category: "concept"
 tags: [trade-offs, architecture, technical-debt, interview-preparation, v1-scope]
-source_count: 15
-updated: 2026-10-18
+source_count: 16
+updated: 2026-11-16
 ---
 
 # Architecture Trade-offs: Resume Deep Dive
@@ -80,31 +80,23 @@ Do not overclaim. The specifications describe a Redlock-style lock, per-user der
 
 ## Purchase Correctness And Concurrency
 
-### Redlock quorum and database fencing
+### Reservation-unit pool replaces Redlock and fencing
 
-**Choice.** Ticket Service allocates a monotonic MySQL fencing token before trying a per-event Redlock lease across five Redis masters. It then executes one conditional SQL statement that decrements inventory and records the token only if it exceeds the last accepted token; ticket insertion follows separately.
+**Former choice.** The earlier implementation coordinated purchases with five Redis Redlock masters and per-event MySQL fencing counters. This duplicated concurrency state and still serialized booking activity around event-level inventory.
 
-**Benefit.** Redlock reduces contention and tolerates one unavailable Redis master in the configured five-node quorum. The database rejects an older fencing token after it has accepted a newer one.
+**Current choice.** `event_db.reservation_units` has one row per saleable unit. Ticket Service selects available rows with `FOR UPDATE SKIP LOCKED`, holds them during a timed checkout, and sells them with the ticket and outbox event after a verified Stripe webhook. Redis remains in use for sessions only. See [[reservation-unit-pool]].
 
-**Cost.** Compose nodes share a host. Failed lock attempts consume token values, creating harmless gaps. The booking transaction currently relies on both schemas being on one MySQL server.
+**Benefit.** The database owns both availability and allocation; no external lock manager or fencing counter is needed for ticket correctness. Concurrent transactions can claim different rows.
 
-**Next step.** Monitor outbox retry age and add durable consumer deduplication by the stable event ID.
+**Cost.** The inventory table has one row per unit. `SKIP LOCKED` may report too few units while concurrent transactions hold rows, so a buyer can receive a conflict and retry. Availability reads aggregate the unit pool.
 
-### Redlock lease plus database fencing
+**Migration.** `make migrate-reservation-units` backfills existing capacity, preserving the legacy remaining count as available rows and setting other units to sold, then drops the obsolete fencing-counter table.
 
-**Current implementation.** Ticket Service uses five Redis masters through Redsync, with a 30-second lease and a unique random owner value. It allocates a monotonic token from MySQL before attempting lock acquisition; failed attempts can create gaps. The inventory update carries the token and records it only when it exceeds the database's last accepted token.
-
-**Benefit.** A paused request with an older token is rejected after MySQL accepts a newer token. The lock reduces contention, while the database remembers the accepted token and protects the storage boundary.
-
-**Limits.** Redlock is still a lease and does not itself produce fencing tokens. The Compose nodes share a host. Fencing compares writes against the highest token already accepted; an old write that reaches MySQL before a newer token is accepted may be applied first. The cross-schema commit depends on a single MySQL instance.
-
-**Next step.** Keep token enforcement and the cross-schema booking transaction, then monitor the relay and make consumer deduplication durable.
-
-**Interview phrasing.** "Redlock helps with lock availability and contention. A monotonic MySQL fencing token lets the database reject an older writer after a newer token has been accepted. Inventory, ticket creation, and event intent commit together; the relay gives at-least-once delivery, so consumers deduplicate by event ID."
+**Expiry and migration.** Existing volumes use `make migrate-stripe-checkout` after migration 004; fresh databases include the schema in `init.sql`. Expired holds are reclaimed on demand when inventory is short or when the owner checks status. There is no scheduled expiry worker.
 
 ### Cross-schema booking transaction
 
-**Choice.** On the current shared MySQL server, one transaction decrements inventory in `event_db`, inserts the ticket in `ticket_db`, and writes a `ticket.purchased` outbox row in `ticket_db`.
+**Choice.** On the current shared MySQL server, one transaction claims inventory units in `event_db`, inserts the ticket in `ticket_db`, and writes a `ticket.purchased` outbox row in `ticket_db`.
 
 **Benefit.** A failure at any point before commit rolls back inventory, ticket, and event intent together. The transaction avoids the prior partial-booking and database-to-Kafka dual-write gaps.
 
@@ -112,15 +104,15 @@ Do not overclaim. The specifications describe a Redlock-style lock, per-user der
 
 **Alternative.** If service databases move to separate servers, use a reservation state machine/saga with compensation or move inventory ownership into Ticket Service. This local cross-schema transaction cannot span independent MySQL instances.
 
-### Reservation instead of payment
+### Stripe test-mode payment simulation
 
-**Choice.** A successful `POST /tickets/purchase` confirms a reservation-like ticket; v1 has no payment provider.
+**Choice.** Authenticated checkout creates a timed reservation and Stripe PaymentIntent using test keys. The browser confirms through Stripe.js; a signed webhook creates the ticket and outbox event. Late successful payments on expired reservations are refunded idempotently.
 
-**Benefit.** The project isolates the hardest demonstrated invariant, inventory allocation, from financial workflows. It avoids PCI scope, payment authorization/capture semantics, refunds, webhooks, fraud handling, and reconciliation.
+**Benefit.** The full asynchronous client-to-provider-to-webhook path can be exercised locally without live charges. The SQL transaction boundary is clear: hold inventory before external payment, then settle ticket, sold units, and outbox together.
 
-**Cost.** The word "purchase" is stronger than the behavior. A real flow needs a held reservation, payment authorization, confirmation, expiration, cancellation, and inventory release.
+**Cost.** Test mode does not prove production payment operations. It still omits payment-method breadth, disputes, production secret management, reconciliation, and operational refund review. Lazy expiry leaves idle expired reservations pending until another request needs stock or the owner checks status.
 
-**Next design.** Create a `pending_payment` reservation with an expiration, publish an outbox event, authorize payment, and confirm or compensate inventory. Make payment-provider webhooks idempotent.
+**Production evolution.** Add a scheduled expiry sweeper for visibility, production key/secrets handling, payment reconciliation, and broader provider-event coverage. Keep the database state machine and provider idempotency keys authoritative.
 
 ## Asynchronous Messaging And Email Delivery
 
@@ -298,7 +290,7 @@ Do not overclaim. The specifications describe a Redlock-style lock, per-user der
 
 | Area | v1 decision | Why it was deferred | What it would require |
 |---|---|---|---|
-| Payment | Booking confirms without payment | Keeps PCI and financial state out of the inventory proof | Reservation expiry, provider integration, webhook idempotency, refunds, reconciliation |
+| Payment | Stripe test-mode checkout simulation with timed holds, webhook settlement, and late-payment refunds | Validates the asynchronous lifecycle without live charges | Production credentials/operations, reconciliation, disputes, and broader payment-method coverage |
 | MFA and social login | Email/password only | Orthogonal to purchase correctness | Identity-provider integration, recovery flows, risk controls |
 | Search/filtering | Pagination only | No evidence yet for search relevance needs | Query/index design or search read model, product relevance rules |
 | Admin event management | Seed data only | Separate operator domain | RBAC, audits, lifecycle, inventory-change policy |
@@ -323,7 +315,7 @@ Do not overclaim. The specifications describe a Redlock-style lock, per-user der
 
 - [[overview]] - system topology and critical purchase flow
 - [[constitution]] - non-negotiable security, concurrency, decoupling, and TDD principles
-- [[distributed-locking]] - Redis lock design and implementation detail
+- [[reservation-unit-pool]] - current inventory coordination design
 - [[pii-encryption]] - encrypted PII storage
 - [[session-management]] - opaque session behavior
 - [[service-decoupling]] - event-driven side effects

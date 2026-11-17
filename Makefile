@@ -1,4 +1,4 @@
-.PHONY: up down build test-unit test-integration test-concurrency test-e2e seed migrate-fencing migrate-outbox logs-% clean
+.PHONY: up down build test-unit test-integration test-e2e simulate-reservations seed migrate-reservation-units migrate-outbox migrate-stripe-checkout logs-% clean
 
 up:
 	docker compose up -d --build
@@ -15,20 +15,24 @@ test-unit:
 test-integration:
 	go test ./services/... -tags=integration -v
 
-test-concurrency:
-	go test -tags=integration ./services/ticket/tests/integration/... -run TestConcurrency -v -count=1
-
 test-e2e:
 	go test -tags=e2e ./services/e2e/... -v -count=1
+
+simulate-reservations:
+	go run ./services/ticket/cmd/loadsim -users 10000 -inventory 500
 
 seed:
 	go run scripts/seed/seed_events.go
 
-migrate-fencing:
-	docker compose exec -T mysql mysql -u root -prootpassword < scripts/db/migrations/002_event_fencing_tokens.sql
+migrate-reservation-units:
+	docker compose exec -T mysql mysql -u root -prootpassword < scripts/db/migrations/004_reservation_units.sql
 
 migrate-outbox:
 	docker compose exec -T mysql mysql -u root -prootpassword < scripts/db/migrations/003_ticket_outbox.sql
+
+# One-time migration for existing databases already initialized before checkout support.
+migrate-stripe-checkout:
+	docker compose exec -T mysql mysql -u root -prootpassword < scripts/db/migrations/005_stripe_checkout.sql
 
 logs-%:
 	docker compose logs $*

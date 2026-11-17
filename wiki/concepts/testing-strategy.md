@@ -2,15 +2,15 @@
 title: "Testing Strategy"
 category: "concept"
 tags: [testing, tdd, unit-tests, integration-tests, e2e, coverage]
-source_count: 7
-updated: 2025-07-16
+source_count: 8
+updated: 2026-11-16
 ---
 
 # Testing Strategy
 
 ## Overview
 
-Testing is a first-class concern with 112 test functions across three levels. All tests run without Docker, MySQL, or Kafka — the full suite completes in under 15 seconds. Testing is a MUST principle under the [[constitution]] (Principle IV: Test-Driven Development).
+Testing spans unit, integration, end-to-end, and an explicit local burst simulation. Many tests use embedded or mocked dependencies; the burst simulation exercises the real reservation handler and MySQL unit allocator, but it is a manual load tool rather than an automated regression test. Testing is a MUST principle under the [[constitution]] (Principle IV: Test-Driven Development).
 
 ## Test Pyramid
 
@@ -22,20 +22,20 @@ pie showData
     "Unit (16 files, 87 tests)" : 16
 ```
 
-All run without Docker, MySQL, or Kafka. 21 test files, 112 test functions total.
+Test counts and coverage should be refreshed after the reservation-unit concurrency test is added.
 
 ### Unit Tests (87)
 - **Scope**: Individual functions in isolation
 - **Dependencies**: Mocked (mock repositories, mock providers)
 - **Speed**: <1ms per test
 - **Tools**: Go standard `testing` package, `testify/mock`
-- **Example**: Test that `purchase()` correctly rejects when `remaining_count < requested quantity`
+- **Example**: Test that `purchase()` correctly rejects when fewer reservation units than requested are available
 
-### Integration Tests (24)
+### Integration Tests
 - **Scope**: Full HTTP router with real middleware, mock repositories
 - **Dependencies**: `miniredis` (embedded Redis), mock MySQL repos
 - **Speed**: ~10-50ms per test
-- **Example**: Full purchase flow through HTTP handler: acquire lock → decrement → insert → return booking_ref
+- **Example**: Full purchase flow through HTTP handler and persistent inventory transaction
 
 ### E2E Tests (1)
 - **Scope**: Cross-service smoke test
@@ -51,13 +51,9 @@ All tests use:
 
 This is critical: tests must be runnable in CI without infrastructure, and must complete in under 15 seconds to not slow down the development feedback loop.
 
-## Concurrency Stress Test
+## Inventory Concurrency
 
-```
-make test-concurrency   # Distributed lock stress test (100 goroutines)
-```
-
-100 concurrent goroutines contend for 1 ticket. Verification: exactly 1 wins, 99 are correctly declined. This directly validates the [[distributed-locking]] implementation.
+The former embedded-Redis lock contention checks were removed with the Redlock purchase path. Inventory allocation now relies on MySQL's `FOR UPDATE SKIP LOCKED` and the unit-pool transaction described in [[reservation-unit-pool]]. `make simulate-reservations` launches 10,000 local HTTP clients against a temporary 500-unit event, with fake Redis sessions and a fake payment gateway. It verifies that reserved unit rows match pending reservations and do not exceed capacity. This manual burst does not replace an automated regression test or a production-scale benchmark.
 
 ## Constitution Requirements
 
@@ -76,13 +72,12 @@ make test-concurrency   # Distributed lock stress test (100 goroutines)
 ```bash
 make test-unit          # 87 unit tests
 make test-integration   # 24 integration tests
-make test-concurrency   # Lock stress test
 make test-e2e           # Cross-service smoke test
 ```
 
 ## Cross-references
 
 - [[constitution]] — Principle IV (Test-Driven Development)
-- [[distributed-locking]] — concurrency stress test validates lock correctness
+- [[reservation-unit-pool]] — transactional inventory concurrency design
 - [[user-service]], [[event-service]], [[ticket-service]], [[email-service]] — each has its own test files
 - [[sources/code-structure]] — test file locations

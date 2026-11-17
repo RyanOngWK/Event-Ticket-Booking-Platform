@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ticket checkout</title>
+  <script src="https://js.stripe.com/v3/"></script>
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #17232b; background: #f2f5f4; }
+    body { margin: 0; padding: 40px 16px; }
+    main { max-width: 600px; margin: auto; padding: 30px; background: white; border: 1px solid #dce4e1; border-radius: 14px; box-shadow: 0 12px 35px #17382b12; }
+    h1 { margin: 0 0 8px; font-size: 1.6rem; }
+    p { color: #53636a; }
+    label { display: block; margin: 18px 0 6px; font-weight: 650; }
+    input { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid #cbd6d2; border-radius: 8px; font: inherit; }
+    button { margin-top: 18px; padding: 11px 16px; color: white; background: #176c50; border: 0; border-radius: 8px; font: inherit; font-weight: 650; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    #payment-form { display: none; margin-top: 24px; padding-top: 18px; border-top: 1px solid #e4ebe8; }
+    #status { min-height: 26px; margin-top: 18px; color: #176c50; white-space: pre-wrap; }
+    .hint { font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Ticket checkout</h1>
+  <p id="checkout-guidance">Reserve tickets for 10 minutes, then pay with a Stripe test card. Your ticket is confirmed only after the server receives Stripe’s signed webhook.</p>
+
+  <form id="reservation-form">
+    <label for="token">Bearer token</label>
+    <input id="token" autocomplete="off" placeholder="Paste the token returned by /api/v1/users/login" required>
+    <p class="hint">Sign in through the User Service first, then paste its session token here.</p>
+    <label for="event-id">Event ID</label>
+    <input id="event-id" type="number" min="1" value="1" required>
+    <label for="quantity">Quantity (1–10)</label>
+    <input id="quantity" type="number" min="1" max="10" value="1" required>
+    <button id="reserve-button">Reserve and continue</button>
+  </form>
+
+  <form id="payment-form">
+    <div id="payment-element"></div>
+    <button id="pay-button">Pay</button>
+  </form>
+  <div id="status" role="status" aria-live="polite"></div>
+</main>
+<script>
+(() => {
+  const reservationForm = document.querySelector('#reservation-form');
+  const paymentForm = document.querySelector('#payment-form');
+  const tokenInput = document.querySelector('#token');
+  const status = document.querySelector('#status');
+  const guidance = document.querySelector('#checkout-guidance');
+  const reserveButton = document.querySelector('#reserve-button');
+  const payButton = document.querySelector('#pay-button');
+  let stripe;
+  let elements;
+  let reservationId = new URLSearchParams(location.search).get('reservation_id');
+
+  tokenInput.value = sessionStorage.getItem('ticket-demo-token') || '';
+  tokenInput.addEventListener('change', () => sessionStorage.setItem('ticket-demo-token', tokenInput.value.trim()));
+
+  async function api(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: { ...(options.headers || {}), Authorization: `Bearer ${tokenInput.value.trim()}`, 'Content-Type': 'application/json' }
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+    return body;
+  }
+
+  function showPaymentError(message) {
+    status.textContent = message;
+    payButton.disabled = false;
+  }
+
+  async function mountPaymentForm(clientSecret) {
+    const config = await fetch('/api/v1/payments/config').then(r => r.json());
+    stripe = Stripe(config.publishable_key);
+    elements = stripe.elements({ clientSecret });
+    document.querySelector('#payment-element').replaceChildren();
+    elements.create('payment').mount('#payment-element');
+    paymentForm.style.display = 'block';
+  }
+
+  async function pollReservation() {
+    status.textContent = 'Waiting for the server to confirm payment…';
+    for (;;) {
+      const r = await api(`/api/v1/tickets/reservations/${encodeURIComponent(reservationId)}`);
+      if (r.status === 'purchased') {
+        guidance.textContent = 'Payment confirmed. Your ticket is booked.';
+        status.textContent = `Payment complete. Booking reference: ${r.booking_ref}`;
+        paymentForm.style.display = 'none';
+        return;
+      }
+      if (r.status === 'expired' || r.status === 'cancelled' || r.status === 'payment_setup_failed') {
+        guidance.textContent = `This reservation ${r.status}. The held tickets are no longer reserved for you.`;
+        status.textContent = `Reservation ${r.status}. Start again to reserve available tickets.`;
+        paymentForm.style.display = 'none';
+        return;
+      }
+      if (r.last_error) {
+        guidance.textContent = 'Your tickets are still held. Retry payment before the reservation expires.';
+        status.textContent = `Payment needs attention: ${r.last_error}. You can retry with another test card.`;
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+
+  reservationForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    reserveButton.disabled = true;
+    status.textContent = 'Reserving inventory…';
+    try {
+      const reservation = await api('/api/v1/tickets/reservations', {
+        method: 'POST',
+        body: JSON.stringify({ event_id: Number(document.querySelector('#event-id').value), quantity: Number(document.querySelector('#quantity').value) })
+      });
+      reservationId = reservation.reservation_id;
+      sessionStorage.setItem(`ticket-demo-secret:${reservationId}`, reservation.payment_intent_client_secret);
+      history.replaceState({}, '', `/checkout?reservation_id=${encodeURIComponent(reservationId)}`);
+      await mountPaymentForm(reservation.payment_intent_client_secret);
+      reservationForm.style.display = 'none';
+      guidance.textContent = 'Your tickets are held for 10 minutes. Complete payment to confirm your booking.';
+      status.textContent = `Reserved ${reservation.quantity} ticket(s) for ${(reservation.amount_cents / 100).toFixed(2)} ${reservation.currency.toUpperCase()}. Expires ${new Date(reservation.expires_at).toLocaleTimeString()}.`;
+    } catch (error) {
+      showPaymentError(error.message);
+      reserveButton.disabled = false;
+    }
+  });
+
+  paymentForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    payButton.disabled = true;
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: { return_url: `${location.origin}/checkout?reservation_id=${encodeURIComponent(reservationId)}` },
+      redirect: 'if_required'
+    });
+    if (error) {
+      showPaymentError(error.message);
+      return;
+    }
+    await pollReservation();
+  });
+
+  if (reservationId && tokenInput.value) {
+    reservationForm.style.display = 'none';
+    const savedSecret = sessionStorage.getItem(`ticket-demo-secret:${reservationId}`);
+    Promise.all([
+      savedSecret ? mountPaymentForm(savedSecret) : Promise.resolve(),
+      pollReservation()
+    ]).catch(error => showPaymentError(error.message));
+  }
+})();
+</script>
+</body>
+</html>

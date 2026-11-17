@@ -1,49 +1,42 @@
 ---
 title: "Redis"
 category: "entity"
-tags: [infrastructure, cache, sessions, distributed-locking]
-source_count: 8
-updated: 2026-10-18
+tags: [infrastructure, cache, sessions]
+source_count: 10
+updated: 2026-11-16
 ---
 
 # Redis
 
 ## Overview
 
-Redis serves as the **session store** and as the **Redlock lease layer** for ticket-purchase contention. Five independent Redis master processes are configured for the lock quorum; the first node is also used for sessions. Compose places all nodes on one host, so they are not production fault domains.
+Redis stores user sessions and supports auth middleware. It is not part of the ticket purchase concurrency path; MySQL reservation-unit rows are the authority for available inventory.
 
-## Roles
+## Responsibilities
 
-### 1. Session Store
+- Store opaque session tokens with a 24-hour TTL
+- Refresh session TTL on authenticated activity
+- Revoke sessions immediately on logout
+- Support rate limiting in user-facing middleware
 
-- Opaque session tokens stored as Redis keys with 24-hour TTL
-- Rolling TTL refresh on authenticated activity
-- Instant revocation on logout (DELETE key)
-- Auth middleware reads `Authorization: Bearer <token>`, looks up in Redis, injects user context
+## Interfaces
 
-### 2. Redlock Lease Layer
+Auth middleware reads `Authorization: Bearer <token>`, looks up the session key in Redis, and injects the user context into the request.
 
-- Lock key pattern: lock:event:{event_id}
-- Ticket Service coordinates a majority of five Redis masters with a 30-second lease.
-- Each acquisition uses a unique owner value; release only removes that acquisition's own lock.
-- MySQL fencing tokens, not Redis, reject stale booking writes after a higher token has been accepted.
+## Data Model
 
-## Configuration
-
-- Docker Compose: session Redis at `redis:6379` plus four additional Redlock masters; all five nodes share one Compose host
-- Used by: [[user-service]] (sessions), [[ticket-service]] (Redlock leases and session validation)
+Session keys map opaque tokens to user identity and expire automatically. See [[session-management]].
 
 ## Key Decisions
 
-- **Redis over PostgreSQL advisory locks** — advisory locks tie the lock lifecycle to a database connection. In a microservice architecture, the lock holder may be a different process from the DB connection owner. Redis is connection-agnostic. See [[distributed-locking]].
-- **Redis over etcd** — etcd would add a new infrastructure component. Redis is already in the stack for sessions.
-- **30s TTL** — per [[constitution]] Principle II: "Lock TTL MUST be configured with a maximum of 30 seconds for ticket operations."
+- Redis is retained for session lifecycle and middleware needs.
+- Ticket inventory correctness does not depend on Redis; purchase claims and commits happen in MySQL. See [[reservation-unit-pool]].
+- The four additional Redlock Redis containers were removed from Docker Compose because purchase coordination no longer uses them.
 
 ## Cross-references
 
-- [[distributed-locking]] — detailed lock strategy and alternatives
-- [[session-management]] — how session tokens work
-- [[ticket-service]] — lock consumer
-- [[user-service]] — session producer/validator
-- [[constitution]] — Principle II (Concurrency Management)
-- [[sources/config-files]] — docker-compose.yml Redis config
+- [[session-management]] — opaque session tokens and rolling TTL
+- [[reservation-unit-pool]] — MySQL inventory authority
+- [[user-service]] — session producer
+- [[ticket-service]] — session validation only
+- [[sources/config-files]] — single Redis container configuration

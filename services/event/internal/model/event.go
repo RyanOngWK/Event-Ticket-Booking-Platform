@@ -10,6 +10,8 @@ type Event struct {
 	Venue          string    `json:"venue"`
 	TotalCapacity  uint64    `json:"total_capacity"`
 	RemainingCount uint64    `json:"remaining_count"`
+	PriceCents     uint64    `json:"price_cents"`
+	Currency       string    `json:"currency"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -20,6 +22,8 @@ type ListItem struct {
 	Date           time.Time `json:"date"`
 	Venue          string    `json:"venue"`
 	RemainingCount uint64    `json:"remaining_count"`
+	PriceCents     uint64    `json:"price_cents"`
+	Currency       string    `json:"currency"`
 	SoldOut        bool      `json:"sold_out"`
 }
 
